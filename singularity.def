@@ -17,9 +17,11 @@ Stage: devel
     curl -sSL https://github.com/kind2-mc/kind2/archive/refs/tags/v1.6.0.tar.gz | tar xz
     mv kind2-1.6.0/* .
     #
-    opam init
+    opam init -y --auto-setup --root /opt/opam
+    opam update
     eval $(opam env)
-    opam update && opam install -y . --deps-only
+    opam install -y . --deps-only
+    echo 'eval `opam env`' >> /opt/opam_env.sh
     #make static
     make build
     strip bin/kind2
