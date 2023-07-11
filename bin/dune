@@ -1,0 +1,10 @@
+;(copy_files# /opt/kind2-build/_build/default/src/kind2dev.*)
+
+(env
+  (dev
+    (flags (:standard -warn-error -all))))
+
+(executable
+ (public_name lustre_comp)
+ (name main)
+ (libraries lustre_comp kind2))

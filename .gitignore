@@ -1,0 +1,28 @@
+# Log files.
+*.log
+*.err
+
+# Generated opam switch.
+_opam
+
+# Generated build stuff.
+_build
+
+# Generated merlin file.
+.merlin
+
+# Generated doc.
+ocamldoc
+
+# aclocal stuff.
+aclocal.m4
+
+# Generated cache stuff.
+autom4te.cache
+
+# VSCode config files
+.vscode/
+
+# GitHub deploy key
+travis_key
+travis_key.pub
