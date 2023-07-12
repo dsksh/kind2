@@ -86,7 +86,7 @@ let pp_print_node ppf
   let pp_print_state_var_trie_debug ppf t = 
     D.bindings t |> 
     pp_print_list
-      (fun ppf (i, sv) -> 
+      (fun ppf (_, sv) -> 
          (*if i = D.empty_index then 
            (*StateVar.pp_print_state_var ppf sv*)
            pp_print_state_var_as_tuple ppf sv

@@ -20,6 +20,9 @@ aclocal.m4
 # Generated cache stuff.
 autom4te.cache
 
+# Kind 2 source
+tmp/kind2
+
 # VSCode config files
 .vscode/
 

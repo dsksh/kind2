@@ -7,6 +7,7 @@ open LustreAstPrinter*)
 
 module I = LustreIdent 
 module D = LustreIndex
+module SV = StateVar
 module SVS = StateVar.StateVarSet
 module SVT = StateVar.StateVarHashtbl
 
@@ -35,11 +36,13 @@ let node_of_ast = function
   | _ -> None
 *)
 
+type svar_instance = SV.t * int list
+
 type node = { 
-  name : I.t;  
-  ivs : StateVar.t D.t;
-  ovs : StateVar.t D.t;
-  lvs : StateVar.t D.t list;
+  name : svar_instance;  
+  ivs : svar_instance list;
+  ovs : svar_instance list;
+  lvs : svar_instance list;
   body : LustreNode.equation list;
 }
 
@@ -49,15 +52,22 @@ type prop = {
   expr : LustreExpr.t;
 }
 
+let instantiate_node_name scope ids id name =
+  let s = LustreIdent.string_of_ident false name in
+  SV.mk_state_var "node" (scope @ [s]) (Type.mk_int ()), ids @ [id]
+
 (*let translate_node (n : LustreNode.t) =
   { name = n.name; ivs = n.inputs; ovs = n.outputs; lvs = n.locals; body = n.equations }*)
 let translate_node { name; inputs; outputs; locals; equations; _ } =
-  { name = name; ivs = inputs; ovs = outputs; lvs = locals; body = equations }
+  let name = instantiate_node_name [] [] 0 name in
+  let of_trie t = D.bindings t |> List.split |> snd |> List.map (fun sv -> (sv,[])) in
+  let lvs = List.fold_left (fun lvs t -> lvs @ of_trie t) [] locals in
+  { name = name; ivs = of_trie inputs; ovs = of_trie outputs; lvs = lvs; body = equations }
 
 let collect_props map ps p =
   let e = match SVT.find_opt map p.svar with
-  | None -> failwith (Format.asprintf "no expr for %a" LustreContract.pp_print_svar p)
   | Some e -> e 
+  | None -> failwith (Format.asprintf "no expr for %a" LustreContract.pp_print_svar p)
   in
   match List.find_opt (fun p -> p.expr = e) ps with
   | Some _ -> ps
@@ -75,24 +85,77 @@ let collect_props_from_contract ps node =
     let ps = List.fold_left (collect_props node.state_var_expr_map) ps gs in 
     ps
 
-let translate_subsystems (type s) : s InputSystem.t -> node list * prop list =
+let translate_subsystems_ (type s) : s InputSystem.t -> node list * prop list =
   (fun in_sys ->
     let lustre_nodes = InputSystem.retrieve_lustre_nodes in_sys in
     let ns = List.map translate_node lustre_nodes in
     let ps = List.fold_left collect_props_from_contract [] lustre_nodes in
     (ns, ps) )
 
+let instantiate_svar id map sv =
+  let sv = match SVT.find_opt map sv with
+  | Some sv -> sv
+  | None -> SV.mk_state_var (SV.name_of_state_var sv) ["$self"] (SV.type_of_state_var sv) in
+  let s = SV.scope_of_state_var sv in
+  let sl = List.length s in
+  let rec f i = function
+  | [] -> []
+  | id::ids -> if i = 0 then [] else id::(f (i-1) ids) in
+  let rec g id = 
+    if List.length id < sl then g (List.append id [0]) else id in
+  let id = g (f sl id) in (* Adjust the indices chain. *)
+  sv, id
+
+let instantiate_svar_trie id map t =
+  D.bindings t |> List.map (fun (_, sv) -> instantiate_svar id map sv)
+
+let instantiate_body id map e =
+  (*LustreExpr.map_vars (fun instantiate_svar id map) e*)
+  e
+
+let instantiate_node parent id map { name; inputs; outputs; locals; calls; equations; _ } =
+  (*let nm = I.push_index name (List.hd (List.rev id)) in*)
+  let ps, ids = match parent with
+  | Some (psv, ids) -> (SV.scope_of_state_var psv), ids
+  | None -> [], [] in
+  let nm = instantiate_node_name ps ids id name in
+  let ivs = instantiate_svar_trie [id] map inputs in
+  let ovs = instantiate_svar_trie [id] map outputs in
+  let lvs = List.fold_left 
+    (fun lvs l -> List.append lvs (instantiate_svar_trie [id] map l)) 
+    [] locals in
+  let body = List.map (instantiate_body [id] map) equations in
+  { name = nm; ivs = ivs; ovs = ovs; lvs = lvs; body = body }
+
+let instantiate_main_nodes nodes =
+  let f (ns,i) n = 
+    if n.is_main then (instantiate_node None i (SVT.create 7) n)::ns, i+1 
+    else ns, i in
+  fst (List.fold_left f ([],0) nodes)
+
+let translate_subsystems in_sys =
+  let ns = InputSystem.retrieve_lustre_nodes in_sys in
+  let nis = instantiate_main_nodes ns in
+  let ps = List.fold_left collect_props_from_contract [] ns in
+  (nis, ps)
+
 (* *)
 
-(*let pp_print_svar ppf (_, sv) =*)
-let pp_print_svar ppf sv =
-  Format.fprintf ppf
-    "('%s', '%a')"
-    (StateVar.string_of_state_var sv)
-    Type.pp_print_type (StateVar.type_of_state_var sv)
+let pp_print_svar_instance ppf (sv,id) =
+  let pp ppf (s,id) = Format.fprintf ppf "%s$%d" s id in
+  Format.fprintf ppf "%a.%s"
+    (pp_print_list pp ".") (List.combine (SV.scope_of_state_var sv) id)
+    (SV.name_of_state_var sv)
 
-let pp_print_svar_trie ppf t = 
-  D.bindings t |> pp_print_list (fun ppf (_, sv) -> pp_print_svar ppf sv) ";@ " ppf
+(*let pp_print_svar ppf (_, sv) =*)
+let pp_print_svi_typed ppf sv =
+  Format.fprintf ppf
+    "('%a', '%a')"
+    pp_print_svar_instance sv
+    Type.pp_print_type (SV.type_of_state_var (fst sv))
+
+(*let pp_print_svar_trie ppf t = 
+  D.bindings t |> pp_print_list (fun ppf (_, sv) -> pp_print_svar ppf sv) ";@ " ppf*)
 
 let pp_print_node ppf node =
   Format.fprintf ppf
@@ -101,10 +164,12 @@ let pp_print_node ppf node =
         'ovs' : [@[<hv>%a@]],@ \
         'lvs' : [@[<hv>%a@]],@ \
         'body' : [@[<hv>%a@]]}@]"
-    (I.pp_print_ident false) node.name
-    pp_print_svar_trie node.ivs
-    pp_print_svar_trie node.ovs
-    (pp_print_list pp_print_svar_trie ";@ ") node.lvs
+    (*(I.pp_print_ident false) node.name*)
+    pp_print_svar_instance node.name
+    (pp_print_list pp_print_svi_typed ";@ ") node.ivs
+    (pp_print_list pp_print_svi_typed ";@ ") node.ovs
+    (pp_print_list pp_print_svi_typed ";@ ") node.lvs
+    (*(pp_print_list pp_print_svar_trie ";@ ") node.lvs*)
     (pp_print_list (LustreNode.pp_print_node_equation false) "@ ") node.body
 
 let pp_print_nodes ppf nodes =
@@ -117,7 +182,7 @@ let pp_print_prop ppf (i, prop) =
       { 'vars' : [@[<hv>%a@]],@ \
         'expr' : [@[<hv>%a@]]}@]"
     i
-    (fun ppf -> SVS.iter (pp_print_svar ppf)) prop.vars
+    (fun ppf -> SVS.iter (SV.pp_print_state_var ppf)) prop.vars
     (LustreExpr.pp_print_lustre_expr false) prop.expr
 
 let pp_print_props ppf props =
@@ -160,13 +225,14 @@ KEvent.log L_info "Creating Input system from  %s."
     | _  -> "input file '" ^ in_file ^ "'" );
 
 try
-  let decls = 
+  (*let decls = 
     match LustreInput.ast_of_file in_file with
     | Ok decls -> decls
     | Error e -> LustreReporting.fail_at_position 
         (LustreErrors.error_position e) (LustreErrors.error_message e)
   in
   Format.printf "%a\n" (pp_print_list LustreAst.pp_print_declaration "[end]\n") decls;
+  *)
 
   let input_system = 
     KEvent.log L_debug "Lustre input detected";
@@ -180,6 +246,7 @@ try
   in
   KEvent.log L_debug "Input System built";
   (*Format.printf "%a\n" InputSystem.pp_print_subsystems_debug input_system*)
+  (*Format.printf "%a\n" InputSystem.pp_print_state_var_instances_debug input_system;*)
   Format.printf "%a\n" LustreNodePrinter.pp_print_subsystems input_system;
   (*let param = InputSystem.interpreter_param input_system in*)
   (*let param = List.hd (InputSystem.mcs_params input_system) in*)
