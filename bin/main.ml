@@ -17,14 +17,45 @@ type node = {
   lvs : svar_instance list;
   body : LustreNode.equation list;*)
   map : svar_instance SVT.t;
+  children : svar_instance list;
   src : LustreNode.t;
 }
 
 type prop = {
-  (*id : StateVar.t;*)
-  map : svar_instance SVT.t;
+  vars : svar_instance list;
   expr : LustreExpr.t;
 }
+
+(* *)
+
+let mk_sv_from_svi ?(is_const:bool = false) (sv,id) =
+  let ss = Format.asprintf "%a" ( pp_print_list 
+    (fun ppf (s,i) -> Format.fprintf ppf "%s$%d" s i) "." )
+    (List.combine (SV.scope_of_state_var sv) id) in
+  SV.mk_state_var ~is_const:is_const 
+    (ss^"."^(SV.name_of_state_var sv)) [] (SV.type_of_state_var sv)
+
+let mk_subst_sv map sv =
+  match SVT.find_opt map sv with
+  | Some svi -> mk_sv_from_svi svi
+  | None -> sv
+
+let mk_subst_var map var =
+  if Var.is_const_state_var var then
+    let sv = Var.state_var_of_state_var_instance var in
+    match SVT.find_opt map sv with
+    | Some svi -> Var.mk_const_state_var (mk_sv_from_svi ~is_const:true svi)
+    | None -> var
+  else if Var.is_state_var_instance var then
+    let sv = Var.state_var_of_state_var_instance var in
+    match SVT.find_opt map sv with
+    | Some svi -> let o = Var.offset_of_state_var_instance var in
+        Var.mk_state_var_instance (mk_sv_from_svi svi) o
+    | None -> var
+  else (* is_free_var *)
+    failwith "subst_var w/ free var"
+
+(* *)
 
 let instantiate_node_name name id =
   let s = LustreIdent.string_of_ident false name in
@@ -55,14 +86,9 @@ let register_arg map (nn, ni) svar0 svar =
 
 let rec instantiate_node nodes id map node =
   let nm = instantiate_node_name node.LustreNode.name id in
-  (*let ivs = instantiate_svar_trie name_i map node.inputs in
-  let ovs = instantiate_svar_trie name_i map node.outputs in
-  let lvs = List.fold_left 
-    (fun lvs l -> lvs @ (instantiate_svar_trie name_i (SVT.create 0) l)) 
-    [] node.locals in
-  let body = List.map (instantiate_body [id] map) node.equations in*)
-  let n = { name = nm; (*ivs = ivs; ovs = ovs; lvs = lvs; body = body;*) map = map; src = node } in
   let cs, id = List.fold_left (instantiate_child nodes nm map) ([],id) node.calls in
+  let c_ns = List.map (fun c -> c.name) cs in
+  let n = { name = nm; map = map; children = c_ns; src = node } in
   n::cs, id
 
 and instantiate_child nodes p_name map (cs0, id) c =
@@ -82,20 +108,21 @@ let instantiate_main_nodes nodes =
     else ns, id in
   List.fold_left f ([],0) nodes
 
-let collect_props nn v_map0 e_map ps p =
-  let e = match SVT.find_opt e_map p.svar with
-  | Some e -> e 
+let collect_props nn v_map e_map ps p =
+  let e0 = match SVT.find_opt e_map p.svar with
+  | Some e -> e
   | None -> failwith (Format.asprintf "no expr for %a" LustreContract.pp_print_svar p)
   in
-  let svs = LustreExpr.state_vars_of_expr e in
-  let v_map = SVT.create (SVS.cardinal svs) in
-  let f sv = SVT.add v_map sv (instantiate_svar nn v_map0 sv) in
-  let _ = SVS.iter f svs in
-  let eq_entry (k1,(v1,i1)) (k2,(v2,i2)) = (k1 = k2 && v1 = v2 && i1 = i2) in
-  let eq_map m1 m2 = Seq.equal eq_entry (SVT.to_seq m1) (SVT.to_seq m2) in
-  match List.find_opt (fun p -> eq_map p.map v_map && p.expr = e) ps with
-  | Some _ -> ps
-  | None -> let p = { map = v_map; expr = e } in p::ps
+  let svs = LustreExpr.state_vars_of_expr e0 in
+  (*let svis = SVS.fold ( fun sv l -> match (SVT.find_opt v_map sv) with
+  | Some svi -> svi::l
+  | None -> failwith (Format.asprintf "%a" SV.pp_print_state_var sv) ) svs [] in*)
+  let svis = SVS.fold (fun sv l -> (instantiate_svar nn v_map sv)::l) svs [] in
+  let expr = LustreExpr.map_vars (mk_subst_var v_map) e0 in
+  match List.find_opt (fun p -> p.expr = expr) ps with
+  | Some _ -> ps 
+  | None -> 
+      ps @ [{ vars = svis; expr = expr }]
 
 let collect_props_from_contract ps ni =
   match ni.src.contract with
@@ -141,90 +168,53 @@ let pp_print_map nn ppf map =
       (pp_print_svar_instance nn) v1 )
     map
 
-(*let map_svars expr 
-{ LustreExpr.expr_init = i; LustreExpr.expr_step = s; LustreExpr.expr_type = t } = 
-  let f sv = SV.mk_state_var "hoge" [] (SV.type_of_state_var sv) in
-  {
-    LustreExpr.expr_init = Term.map_state_vars f i;
-    LustreExpr.expr_step = Term.map_state_vars f s;
-    LustreExpr.expr_type = t
-  }
-*)
-
-let mk_sv_from_svi ?(is_const:bool = false) (sv,id) =
-  let s = List.map (fun (s,i) -> Format.sprintf "%s$%d" s i)
-    (List.combine (SV.scope_of_state_var sv) id) in
-  SV.mk_state_var ~is_const:is_const 
-    (SV.name_of_state_var sv) s (SV.type_of_state_var sv)
-
-let mk_subst_sv map sv =
-  match SVT.find_opt map sv with
-  | Some svi -> mk_sv_from_svi svi
-  | None -> sv
-
-let mk_subst_var map var =
-  if Var.is_const_state_var var then
-    let sv = Var.state_var_of_state_var_instance var in
-    match SVT.find_opt map sv with
-    | Some svi -> Var.mk_const_state_var (mk_sv_from_svi ~is_const:true svi)
-    | None -> var
-  else if Var.is_state_var_instance var then
-    let sv = Var.state_var_of_state_var_instance var in
-    match SVT.find_opt map sv with
-    | Some svi -> let o = Var.offset_of_state_var_instance var in
-        Var.mk_state_var_instance (mk_sv_from_svi svi) o
-    | None -> var
-  else (* is_free_var *)
-    failwith "subst_var w/ free var"
-
-let pp_print_node ppf { name; map; src } =
+let pp_print_node ppf { name; map; children; src } =
   let nn = Some name in
   let ivs = instantiate_svar_trie name map src.inputs in
   let ovs = instantiate_svar_trie name map src.inputs in
   let lvs = List.fold_left 
     (fun lvs l -> lvs @ (instantiate_svar_trie name (SVT.create 0) l)) 
     [] src.locals in
-  (*let f v = 
-    let sv = Var.state_var_of_state_var_instance v in
-    Var.mk_const_state_var (SV.mk_state_var ~is_const:true ((SV.name_of_state_var sv)^"$") [] (SV.type_of_state_var sv)) in*)
   let es = List.map ( fun ((v,bf),body) -> 
       (mk_subst_sv map v, bf), LustreExpr.map_vars (mk_subst_var map) body )
     src.equations in
   Format.fprintf ppf
-  "'%a' : @[<hv 2>\
-      { 'ivs' : [@[<hv>%a@]],@ \
-        'ovs' : [@[<hv>%a@]],@ \
-        'lvs' : [@[<hv>%a@]],@ \
-        'body' : [@[<hv>%a@]],@ \
-        'map' : [@[<hv>%a@]]}@]"
+  "@[<v 2>'%a' : {@ \
+    'ivs' : [@[<hv>%a@]],@ \
+    'ovs' : [@[<hv>%a@]],@ \
+    'lvs' : [@[<hv>%a@]],@ \
+    'body' : [@[<hv>%a@]],@ \
+    'children' : [@[<hv>%a@]],@ \
+    'map' : [@[<hv>%a@]] }@]"
     (pp_print_svar_instance None) name
     (pp_print_list (pp_print_svi_typed nn) ";@ ") ivs
     (pp_print_list (pp_print_svi_typed nn) ";@ ") ovs
     (pp_print_list (pp_print_svi_typed nn) ";@ ") lvs
-    (pp_print_list (LustreNode.pp_print_node_equation true) "@ ") es
+    (pp_print_list (LustreNode.pp_print_node_equation false) "@ ") es
+    (pp_print_list (pp_print_svar_instance None) ";@ ") children
     (pp_print_map nn) map
 
 let pp_print_nodes ppf nodes =
-  Format.fprintf ppf "nodes = @ \
-  @[<hv 2>{%a}@]" (pp_print_list pp_print_node ",@ ") nodes
+  Format.fprintf ppf "@[<hv 2>nodes = {@ %a }@]" 
+    (pp_print_list pp_print_node ",@ ") nodes
 
 let pp_print_prop ppf (i, prop) =
+  (*let expr = LustreExpr.map_vars (mk_subst_var prop.map) prop.expr in*)
   Format.fprintf ppf
-  "'p%d' : @[<hv 2>\
-      { 'vars' : [@[<hv>%a@]],@ \
-        'expr' : [@[<hv>%a@]],@ \
-        'map' : [@[<hv>%a@]]}@]"
+    "@[<v 2>'p%d' : {@ \
+      'vars' : [@[<hv>%a@]],@ \
+      'expr' : [@[<hv>%a@]] }@]"
     i
-    (*(fun ppf -> SVS.iter (SV.pp_print_state_var ppf)) prop.vars*)
-    (fun ppf -> Seq.iter (pp_print_svar_instance None ppf)) (SVT.to_seq_values prop.map)
+    (*(fun ppf -> Seq.iter (pp_print_svar_instance None ppf)) (SVT.to_seq_values prop.map)*)
+    (pp_print_list (pp_print_svi_typed None) ";@ ") prop.vars
     (LustreExpr.pp_print_lustre_expr false) prop.expr
-    (pp_print_map None) prop.map
+    (*(pp_print_map None) prop.map*)
 
 let pp_print_props ppf props =
   let rec f i is = if i = List.length props then is else i::(f (i+1) is) in
   let props = List.combine (f 0 []) props in
-  Format.fprintf ppf "props = @ \
-  @[<hv 2>{%a}@]" (pp_print_list pp_print_prop ",@ ") props
+  Format.fprintf ppf "@[<v 2>props = {@ %a }@]" 
+    (pp_print_list pp_print_prop ",@ ") props
 
 (* *)
 
@@ -297,8 +287,8 @@ with
    KEvent.terminate_log () ; exit ExitCodes.error
 | e ->
    let backtrace = Printexc.get_raw_backtrace () in
-   KEvent.log L_fatal "Error opening input file '%s':@ %s%a"
-     (in_file) (Printexc.to_string e)
+   KEvent.log L_fatal "Unexpected error:@ %s%a"
+     (Printexc.to_string e)
      (if Printexc.backtrace_status ()
       then fun fmt -> Format.fprintf fmt "@\nBacktrace:@ %a" print_backtrace
       else fun _ _ -> ()) backtrace;
