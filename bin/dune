@@ -7,4 +7,4 @@
 (executable
  (public_name lustre_comp)
  (name main)
- (libraries lustre_comp kind2))
+ (libraries lustre_comp kind2 swipl.swipl))
