@@ -49,8 +49,7 @@ g(_) <=> false.
 
 reducesTo_(Goal, C) :-
   call(Goal),
-  call(user:'$enumerate_constraints'(C)),
-  writeln(C).
+  call(user:'$enumerate_constraints'(C)).
 reducesTo(Goal, Constraints) :-
   findall(Constraint, reducesTo_(Goal, Constraint), Constraints).
 |} 
@@ -106,28 +105,29 @@ let encode ctx cs =
 
 let reducesTo goal result = Swipl.Syntax.(app ("reducesTo" /@ 2) [goal; result])
 
+let rec pp_print_constr ppf = function
+| M i -> Format.fprintf ppf "M(%d)" i
+| Compat (i,j) -> Format.fprintf ppf "Compat(%d,%d)" i j
+| Impl (i,j) -> 
+  Format.fprintf ppf "Impl([%a], [%a])" 
+    (Lib.pp_print_list Format.pp_print_int ",") i
+    (Lib.pp_print_list Format.pp_print_int ",") j
+| Goal c -> Format.fprintf ppf "G(%a)" pp_print_constr c
+
 let rec pp_print_term ctx ppf t =
   let n, al = Swipl.extract_functor ctx t in
   match Swipl.show_atom n, al with
-  | "n", [a] -> let i = Swipl.get_int ctx a |> Option.get in
+  | "n", [a] -> let i = Swipl.extract_int ctx a in
     Format.fprintf ppf "n(%d)" i
   | "compat", [a1;a2] ->
-    let i = Swipl.get_int ctx a1 |> Option.get in
-    let j = Swipl.get_int ctx a2 |> Option.get in
-    (*let i = match Swipl.get_int ctx a1 with | Some v -> v 
-    | None -> match Swipl.get_int64 ctx a1 with Some v -> Int64.to_int v 
-    | None -> match Swipl.get_long ctx a1 with Some v -> Signed.Long.to_int v 
-    | None -> failwith "unexpected type" in
-    let j = match Swipl.get_int ctx a2 with | Some v -> v 
-    | None -> match Swipl.get_int64 ctx a2 with Some v -> Int64.to_int v 
-    | None -> match Swipl.get_long ctx a2 with Some v -> Signed.Long.to_int v 
-    | None -> failwith "unexpected type" in*)
+    let i = Swipl.extract_int ctx a1 in
+    let j = Swipl.extract_int ctx a2 in
     Format.fprintf ppf "compat(%d,%d)" i j
   | "impl", [a1;a2] -> 
     let l1 = Swipl.extract_list ctx a1 in
     let l2 = Swipl.extract_list ctx a2 in
-    let l1 = List.map (fun a -> Swipl.get_int ctx a |> Option.get) l1 in
-    let l2 = List.map (fun a -> Swipl.get_int ctx a |> Option.get) l2 in
+    let l1 = List.map (fun a -> Swipl.extract_int ctx a) l1 in
+    let l2 = List.map (fun a -> Swipl.extract_int ctx a) l2 in
     Format.fprintf ppf "impl([%a], [%a])"
       (Lib.pp_print_list Format.pp_print_int ",") l1
       (Lib.pp_print_list Format.pp_print_int ",") l2
@@ -165,10 +165,10 @@ let test () =
   print_endline "done"
 
 let test1 () =
-  let ns = [M 1; M 2; M 3; M 4] in
-  let cs = [Compat (1,2); Compat (1,4); Compat (2,3); Compat (3,4)] in
-  let is = [Impl ([1;4],[3]); Impl ([2;3],[4])] in
-  let g = Goal (Impl ([1;2],[3])) in
+  let ns = [M 1; M 2; M (-3); M (-4)] in
+  let cs = [Compat (1,2); Compat (1,-4); Compat (2,-3); Compat (-3,-4)] in
+  let is = [Impl ([1;-4],[-3]); Impl ([2;-3],[-4])] in
+  let g = Goal (Impl ([1;2],[-3])) in
   let cs = ns @ cs @ is @ [g] in
   init ();
   Swipl.with_ctx ( fun ctx ->

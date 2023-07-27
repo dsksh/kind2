@@ -18,6 +18,7 @@ type node = {
 }
 
 type prop = {
+  id : int;
   vars : svar_instance list;
   expr : LustreExpr.t;
 }
@@ -25,6 +26,9 @@ type prop = {
 let instantiate_node_name name id =
   let s = LustreIdent.string_of_ident false name in
   SV.mk_state_var "node" [s] (Type.mk_int ()), [id]
+
+let id_of_node_instance name =
+  List.hd(snd name)
 
 let instantiate_svar (nn,id) map sv =
   match SVT.find_opt map sv with
@@ -136,7 +140,7 @@ let instantiate_main_nodes nodes =
     else ns, id in
   List.fold_left f ([],0) nodes
 
-let collect_props nn v_map e_map ps p =
+let collect_props nn v_map e_map (ps,pids) p =
   let e0 = match SVT.find_opt e_map p.svar with
   | Some e -> e
   | None -> failwith (Format.asprintf "no expr for %a" LustreContract.pp_print_svar p)
@@ -145,25 +149,27 @@ let collect_props nn v_map e_map ps p =
   let svis = SVS.fold (fun sv l -> (instantiate_svar nn v_map sv)::l) svs [] in
   let expr = LustreExpr.map_vars (mk_subst_var (Some nn) v_map) e0 in
   match List.find_opt (fun p -> LustreExpr.equal p.expr expr) ps with
-  | Some _ -> ps 
+  | Some p -> ps, List.sort (fun i j -> -(Int.compare i j)) (p.id::pids)
   | None -> 
-      ps @ [{ vars = svis; expr = expr }]
+      let id = -1 - (List.length ps) in
+      ps @ [{ id = id; vars = svis; expr = expr }], pids @ [id]
 
-let collect_props_from_contract ps ni =
+let collect_props_from_contract (ps,cs) ni =
   match ni.src.contract with
-  | None -> ps
+  | None -> ps, cs
   | Some c -> 
-    let ps = List.fold_left 
-      (collect_props ni.name ni.map ni.src.state_var_expr_map) ps c.assumes in
+    let f = collect_props ni.name ni.map ni.src.state_var_expr_map in
+    let ps,pids_a = List.fold_left f (ps,[]) c.assumes in
     let gs = fst (List.split c.guarantees) in
-    let ps = List.fold_left (collect_props ni.name ni.map ni.src.state_var_expr_map) ps gs in 
-    ps
+    let ps,pids_g = List.fold_left f (ps,[]) gs in 
+    let c = id_of_node_instance ni.name, pids_a, pids_g in
+    ps, c::cs
 
 let translate_subsystems in_sys =
   let ns = InputSystem.retrieve_lustre_nodes in_sys in
   let nis, _ = instantiate_main_nodes ns in
-  let ps = List.fold_left collect_props_from_contract [] nis in
-  (nis, ps)
+  let ps, cs = List.fold_left collect_props_from_contract ([],[]) nis in
+  (nis, ps, cs)
 
 (* *)
 
@@ -223,20 +229,59 @@ let pp_print_nodes ppf nodes =
   Format.fprintf ppf "@[<v 2>nodes = {@ %a }@]" 
     (pp_print_list pp_print_node ",@ ") nodes
 
-let pp_print_prop ppf (i, prop) =
+let pp_print_prop ppf prop =
   Format.fprintf ppf
     "@[<v 2>'p%d' : {@ \
       'vars' : [@[<hv>%a@]],@ \
       'expr' : [@[<hv>%a@]] }@]"
-    i
+    prop.id
     (pp_print_list (pp_print_svi_typed None) ";@ ") prop.vars
     (LustreExpr.pp_print_lustre_expr false) prop.expr
 
 let pp_print_props ppf props =
-  let rec f i is = if i = List.length props then is else i::(f (i+1) is) in
-  let props = List.combine (f 0 []) props in
+  (*let rec f i is = if i = List.length props then is else i::(f (i+1) is) in
+  let props = List.combine (f 0 []) props in*)
   Format.fprintf ppf "@[<v 2>props = {@ %a }@]" 
     (pp_print_list pp_print_prop ",@ ") props
+
+(* *)
+
+let is_compat_node_pair n1 n2 ps =
+  let id1 = id_of_node_instance n1.name in
+  let id2 = id_of_node_instance n2.name in
+  if id1 < id2 then
+    let ovs1 = instantiate_svar_trie n1.name n1.map n1.src.outputs in
+    let ovs2 = instantiate_svar_trie n2.name n2.map n2.src.outputs in
+    let chk v1 b = b && not (List.mem v1 ovs2) in
+    if List.fold_right chk ovs1 true then
+      Validator.Compat (id1,id2) :: ps
+    else ps
+  else ps
+
+let is_compat_node_prop_pair n p ps =
+  let id1 = id_of_node_instance n.name in
+  let id2 = p.id in
+  let ovs1 = instantiate_svar_trie n.name n.map n.src.outputs in
+  let ovs2 = p.vars in
+  let chk v1 b = b && not (List.mem v1 ovs2) in
+  if List.fold_right chk ovs1 true then
+    Validator.Compat (id1,-id2) :: ps
+  else ps
+
+let is_compat_prop_pair p1 p2 ps =
+  if p1.id < p2.id then
+    let ovs1 = p1.vars in
+    let ovs2 = p2.vars in
+    let chk v1 b = b && not (List.mem v1 ovs2) in
+    if List.fold_right chk ovs1 true then
+      Validator.Compat (-p1.id, -p2.id) :: ps
+    else ps
+  else ps
+
+let enum_compat_pairs cf np1 l2 ps =
+  List.fold_right (cf np1) l2 ps
+let enum_compat_pairs cf l1 l2 =
+  List.fold_right (fun n -> enum_compat_pairs cf n l2) l1 []
 
 (* *)
 
@@ -291,11 +336,29 @@ try
         exit 0 ) in
   KEvent.log L_debug "Input System built";
   Format.printf "%a@." LustreNodePrinter.pp_print_subsystems input_system;
-  let ns, ps = translate_subsystems input_system in
+  let ns, ps, cs = translate_subsystems input_system in
   Format.printf "%a@." pp_print_nodes ns;
   Format.printf "%a@." pp_print_props ps;
 
-  Validator.test1 ();
+  (* *)
+
+  let ms = List.map (fun n -> Validator.M (id_of_node_instance n.name)) ns in
+  Format.printf "%a@." (pp_print_list Validator.pp_print_constr ",@ ") ms;
+  (*let ps = List.mapi (fun i p -> p,i+1) ps in*)
+  let ms = List.map (fun p -> Validator.M p.id) ps in
+  Format.printf "%a@." (pp_print_list Validator.pp_print_constr ",@ ") ms;
+
+  let compats = enum_compat_pairs is_compat_node_pair ns ns in
+  Format.printf "%a@." (pp_print_list Validator.pp_print_constr ",@ ") compats;
+  let compats = enum_compat_pairs is_compat_node_prop_pair ns ps in
+  Format.printf "%a@." (pp_print_list Validator.pp_print_constr ",@ ") compats;
+  let compats = enum_compat_pairs is_compat_prop_pair ps ps in
+  Format.printf "%a@." (pp_print_list Validator.pp_print_constr ",@ ") compats;
+
+  let impls = List.map (fun (mid,ids_a,ids_g) -> Validator.Impl ((mid::ids_a), ids_g)) cs in
+  Format.printf "%a@." (pp_print_list Validator.pp_print_constr ",@ ") impls;
+
+  (*Validator.test1 ();*)
 
   ()
 with
