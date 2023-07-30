@@ -1,3 +1,5 @@
+open Lib
+open NodeInstance
 
 let init () = 
   Swipl.initialise ();
@@ -43,7 +45,7 @@ impl(N1,N2), impl(N3,N4) ==>
 %
 
 impl(N1,N2) \ g(impl(N3,N4)) <=> subset(N1,N3), subset(N4,N2) | true.
-g(_) <=> false.
+%g(_) <=> false.
 
 %
 
@@ -146,6 +148,8 @@ let decode ctx t =
   let ls = Swipl.extract_list ctx t in
   List.map (decode ctx) ls
 
+(* *)
+
 let test () =
   init ();
   Swipl.with_ctx ( fun ctx ->
@@ -173,10 +177,76 @@ let test1 () =
   init ();
   Swipl.with_ctx ( fun ctx ->
     let cs = encode ctx cs in
-    let res = Swipl.fresh ctx in    
-    Swipl.call ctx (reducesTo cs res); 
+    let res = Swipl.fresh ctx in
+    Swipl.call ctx (reducesTo cs res);
     let _ = decode ctx res in ()
   );
   print_endline "done"
+
+(* *)
+
+let is_compat_node_pair n1 n2 ps =
+  let id1 = id_of_node_instance n1.name in
+  let id2 = id_of_node_instance n2.name in
+  if id1 < id2 then
+    let ovs1 = instantiate_svar_trie n1.name n1.map n1.src.outputs in
+    let ovs2 = instantiate_svar_trie n2.name n2.map n2.src.outputs in
+    let chk v1 b = b && not (List.mem v1 ovs2) in
+    if List.fold_right chk ovs1 true then
+      Compat (id1,id2) :: ps
+    else ps
+  else ps
+
+let is_compat_node_prop_pair n p ps =
+  let id1 = id_of_node_instance n.name in
+  let id2 = p.id in
+  let ovs1 = instantiate_svar_trie n.name n.map n.src.outputs in
+  let ovs2 = p.vars in
+  let chk v1 b = b && not (List.mem v1 ovs2) in
+  if List.fold_right chk ovs1 true then
+    Compat (id1,-id2) :: ps
+  else ps
+
+let is_compat_prop_pair p1 p2 ps =
+  if p1.id < p2.id then
+    let ovs1 = p1.vars in
+    let ovs2 = p2.vars in
+    let chk v1 b = b && not (List.mem v1 ovs2) in
+    if List.fold_right chk ovs1 true then
+      Compat (-p1.id, -p2.id) :: ps
+    else ps
+  else ps
+
+let enum_compat_pairs cf np1 l2 ps =
+  List.fold_right (cf np1) l2 ps
+let enum_compat_pairs cf l1 l2 =
+  List.fold_right (fun n -> enum_compat_pairs cf n l2) l1 []
+
+let validate ns ps cs gs =
+  let ms = List.map (fun n -> M (id_of_node_instance n.name)) ns in
+  let ms = ms @ (List.map (fun p -> M p.id) ps) in
+  Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") ms;
+
+  let compats = enum_compat_pairs is_compat_node_pair ns ns in
+  let compats = compats @ (enum_compat_pairs is_compat_node_prop_pair ns ps) in
+  let compats = compats @ (enum_compat_pairs is_compat_prop_pair ps ps) in
+  Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") compats;
+
+  let impls = List.map (fun (mid,ids_a,ids_g) -> Impl ((mid::ids_a), ids_g)) cs in
+  Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") impls;
+  let g_impls = List.map (fun (mid,ids_a,ids_g) -> Goal (Impl ((mid::ids_a), ids_g))) gs in
+  Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") g_impls;
+
+  let cs = ms @ compats @ impls @ g_impls in
+  init ();
+  Swipl.with_ctx ( fun ctx ->
+    let cs = encode ctx cs in
+    let res = Swipl.fresh ctx in
+    Swipl.call ctx (reducesTo cs res);
+    let _ = decode ctx res in ()
+  );
+  print_endline "done";
+  true
+
 
 (* eof *)
