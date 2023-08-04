@@ -38,8 +38,8 @@ impl(N1,N2) \ impl(N1,N2) <=> true.
 
 impl(N1,N2), impl(N3,N4) ==>
   subtract(N1,N4,N5), subtract(N3,N2,N6), 
-  append(N5,N6,N7), sort(N7,N8), append(N2,N4,N9), sort(N9,N10),
-  is_compat(N1,N4), is_compat(N2,N3), is_compat(N5,N6), is_compat(N2,N4) |
+  is_compat(N5,N6), append(N5,N6,N7), sort(N7,N8), 
+  is_compat(N2,N4), append(N2,N4,N9), sort(N9,N10) |
   impl(N8,N10).
 
 %
@@ -148,7 +148,7 @@ let decode ctx t =
   let ls = Swipl.extract_list ctx t in
   List.map (decode ctx) ls
 
-(* *)
+(*
 
 let test () =
   init ();
@@ -183,7 +183,7 @@ let test1 () =
   );
   print_endline "done"
 
-(* *)
+*)
 
 let is_compat_node_pair n1 n2 ps =
   let id1 = id_of_node_instance n1.name in
@@ -193,7 +193,7 @@ let is_compat_node_pair n1 n2 ps =
     let ovs2 = instantiate_svar_trie n2.name n2.map n2.src.outputs in
     let chk v1 b = b && not (List.mem v1 ovs2) in
     if List.fold_right chk ovs1 true then
-      Compat (id1,id2) :: ps
+      Compat (id1, id2) :: ps
     else ps
   else ps
 
@@ -204,7 +204,7 @@ let is_compat_node_prop_pair n p ps =
   let ovs2 = p.vars in
   let chk v1 b = b && not (List.mem v1 ovs2) in
   if List.fold_right chk ovs1 true then
-    Compat (id1,-id2) :: ps
+    Compat (id2, id1) :: ps
   else ps
 
 let is_compat_prop_pair p1 p2 ps =
@@ -213,7 +213,7 @@ let is_compat_prop_pair p1 p2 ps =
     let ovs2 = p2.vars in
     let chk v1 b = b && not (List.mem v1 ovs2) in
     if List.fold_right chk ovs1 true then
-      Compat (-p1.id, -p2.id) :: ps
+      Compat (p1.id, p2.id) :: ps
     else ps
   else ps
 
@@ -223,7 +223,8 @@ let enum_compat_pairs cf l1 l2 =
   List.fold_right (fun n -> enum_compat_pairs cf n l2) l1 []
 
 let validate ns ps cs gs =
-  let ms = List.map (fun n -> M (id_of_node_instance n.name)) ns in
+  let ids_m = List.map (fun n -> id_of_node_instance n.name) ns in
+  let ms = List.map (fun i -> M i) ids_m in
   let ms = ms @ (List.map (fun p -> M p.id) ps) in
   Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") ms;
 
@@ -232,9 +233,10 @@ let validate ns ps cs gs =
   let compats = compats @ (enum_compat_pairs is_compat_prop_pair ps ps) in
   Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") compats;
 
-  let impls = List.map (fun (mid,ids_a,ids_g) -> Impl ((mid::ids_a), ids_g)) cs in
+  let impls = List.map (fun (mid,ids_a,ids_g) -> Impl (ids_a @ [mid], ids_g)) cs in
   Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") impls;
-  let g_impls = List.map (fun (mid,ids_a,ids_g) -> Goal (Impl ((mid::ids_a), ids_g))) gs in
+  (*let g_impls = List.map (fun (mid,ids_a,ids_g) -> Goal (Impl ((mid::ids_a), ids_g))) gs in*)
+  let g_impls = List.map (fun (_,ids_a,ids_g) -> Goal (Impl (ids_a @ ids_m, ids_g))) gs in
   Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") g_impls;
 
   let cs = ms @ compats @ impls @ g_impls in

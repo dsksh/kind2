@@ -86,22 +86,76 @@ let mk_subst_var nno map var =
   else (* is_free_var *)
     failwith "subst_var w/ free var"
 
+let add_sv_to_trie v t =
+  (* If a trie contains only a leaf w/ the key [], remake the trie. *)
+  let t = if D.mem [] t then D.empty |> D.add [D.ListIndex 0] (D.find [] t) else t in
+  let n = D.top_max_index t |> succ in
+  let i = if n > 0 then [D.ListIndex n] else [] in (* TODO: adequacy of the index *)
+  (*Format.printf "%a; %d@." (pp_print_list (D.pp_print_index true) ",") (D.keys t) n;
+  Format.printf "@[%a@]@." (D.pp_print_index_trie true SV.pp_print_state_var) t;*)
+  D.add i v t
+
 (* *)
 
+let add_ghost_vs node =
+  let i = ref 0 in
+  let f _ iv (os, cs) =
+    let ff k civ acc = 
+      if civ <> iv then acc else
+        let os, cinputs = acc in
+        let new_civ = SV.mk_state_var 
+          (Format.sprintf "%s_ghost%d" (SV.name_of_state_var iv) !i)
+          (SV.scope_of_state_var iv) (SV.type_of_state_var iv) in
+        incr i;
+        let os = add_sv_to_trie new_civ os in
+        os, (k, new_civ)::cinputs
+      in
+    let os, new_cinputs = 
+      List.fold_right 
+        (fun c (os,cinputs) -> let os, cis = D.fold ff c.call_inputs (os,[]) in os, cis::cinputs) 
+        cs (os,[]) in
+    let ff (c,new_cis) =
+      let cis = List.fold_right (fun (k,civ) cis -> D.add k civ cis) new_cis c.call_inputs in
+      { c with call_inputs = cis } in
+    let cs = List.map ff (List.combine cs new_cinputs) in
+    os, cs
+  in
+  let os, cs = D.fold f node.inputs (node.outputs, node.calls) in
+  { node with outputs = os; calls = cs }
+
+(*let transfer_contracts nodes node =
+  let f call (ass,gs) =
+    let callee = LustreNode.node_of_name call.call_node_name nodes in
+    match callee.contract with
+    | None -> ass, gs
+    | Some c -> 
+      let ass = ass @ fst (List.split c.guarantees) in
+      let gs = gs @ (List.map (fun sv -> sv, true) c.assumes) in (* TODO *)
+      ass, gs
+  in
+  let (ass,gs) = List.fold_right f node.calls ([],[]) in
+  let contract = match node.contract with
+  | None -> 
+    let sv = SV.mk_state_var "sofar" [] Type.t_bool in (* TODO *)
+    Some { assumes = ass; guarantees = gs; sofar_assump = sv; modes = [] }
+  | Some c -> 
+    Some ({ c with assumes = c.assumes @ ass; guarantees = c.guarantees @ gs }) in
+  { node with contract = contract }
+*)
+
+(* *)
+
+(* Make some local variables observable (input or output). *)
 let mk_observable node =
-  let f ind v (is,os,ls) = let n = SV.name_of_state_var v in
+  let f _ v (is,os,ls) = let n = SV.name_of_state_var v in
+    (*Format.printf "%a@." (pp_print_list (D.pp_print_one_index false) ",") ind;*)
     if String.starts_with ~prefix:"call" n then 
-      let n = D.top_max_index is |> succ in (* TODO: adequacy of the index *)
-      let is = D.add (D.ListIndex n::ind) v is in
-      is, os, ls
-    else if not (String.equal "sofar" n) && not (String.starts_with ~prefix:"glocal" n) then
-      let n = D.top_max_index os |> succ in (* TODO: index *)
-      let os = D.add (D.ListIndex n::ind) v os in
-      is, os, ls
+      add_sv_to_trie v is, os, ls
+    else if not (String.starts_with ~prefix:"sofar" n) && 
+            not (String.starts_with ~prefix:"glocal" n) then
+      is, add_sv_to_trie v os, ls
     else 
-      let n = D.top_max_index ls |> succ in (* TODO: index *)
-      let ls = D.add (D.ListIndex n::ind) v ls in
-      is, os, ls in
+      is, os, add_sv_to_trie v ls in
   let ff ls (is,os,l) = 
     let is, os, ls = D.fold f ls (is, os, D.empty) in
     is, os, ls::l in
@@ -110,6 +164,7 @@ let mk_observable node =
 
 let rec instantiate_node nodes id map node =
   let nm = instantiate_node_name node.LustreNode.name id in
+  (*Format.printf "instantiate %a@." (LustreIdent.pp_print_ident true) node.name;*)
   let cs, id = List.fold_left (instantiate_child nodes nm map) ([],id) node.calls in
   let c_ns = List.map (fun c -> c.name) cs in
   let node = if cs = [] then node else mk_observable node in
@@ -118,6 +173,7 @@ let rec instantiate_node nodes id map node =
 
 and instantiate_child nodes p_name map (cs0, id) c =
   let map = SVT.copy map in
+  (* Obtain the child node entry. *)
   let callee = LustreNode.node_of_name c.call_node_name nodes in
   let _ = List.combine (D.bindings callee.inputs) (D.bindings c.call_inputs) |> 
     List.map (fun ((_,sv0), (_,sv1)) -> register_arg map p_name sv0 sv1) in
@@ -133,7 +189,7 @@ let instantiate_main_nodes nodes =
     else ns, id in
   List.fold_left f ([],0) nodes
 
-let collect_props nn v_map e_map (ps,pids) p =
+let collect_props nn v_map e_map p (ps,pids) =
   let e0 = match SVT.find_opt e_map p.svar with
   | Some e -> e
   | None -> failwith (Format.asprintf "no expr for %a" LustreContract.pp_print_svar p)
@@ -147,24 +203,32 @@ let collect_props nn v_map e_map (ps,pids) p =
       let id = -1 - (List.length ps) in
       ps @ [{ id = id; vars = svis; expr = expr }], pids @ [id]
 
-let collect_props_from_contract (ps,cs,goals) ni =
+let collect_props_from_contract ni (ps,cs,goals) =
   match ni.src.contract with
   | None -> ps, cs, goals
   | Some c -> 
     let f = collect_props ni.name ni.map ni.src.state_var_expr_map in
-    let ps,pids_a = List.fold_left f (ps,[]) c.assumes in
+    let ps,pids_a = List.fold_right f c.assumes (ps,[]) in
     let gs = fst (List.split c.guarantees) in
-    let ps,pids_g = List.fold_left f (ps,[]) gs in 
-    let c = id_of_node_instance ni.name, pids_a, pids_g in
-    if not ni.src.is_main then
-      ps, c::cs, goals
-    else
-      ps, cs, c::goals
+    let ps,pids_g = List.fold_right f gs (ps,[]) in 
+    let pid = id_of_node_instance ni.name in
+    let goals = if ni.src.is_main then (pid, pids_a, pids_g)::goals else goals in
+
+    (* Transfer the As and Gs from the children. TODO: children of children. *)
+    let f cn (pids_a, pids_g) = 
+      match List.find_opt (fun (pid,_,_) -> pid = id_of_node_instance cn) cs with
+    | None -> (pids_a, pids_g)
+    | Some (_,a,g) -> (pids_a @ g, pids_g @ a) in
+    let pids_a, pids_g = List.fold_right f ni.children (pids_a, pids_g) in
+
+    let c = pid, pids_a, pids_g in
+    ps, c::cs, goals
 
 let translate_subsystems in_sys =
   let ns = InputSystem.retrieve_lustre_nodes in_sys in
+  (*let ns = List.map add_ghost_vs ns in*)
   let nis, _ = instantiate_main_nodes ns in
-  let ps, cs, gs = List.fold_left collect_props_from_contract ([],[],[]) nis in
+  let ps, cs, gs = List.fold_right collect_props_from_contract nis ([],[],[]) in
   (nis, ps, cs, gs)
 
 (* *)

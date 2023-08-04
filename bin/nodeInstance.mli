@@ -40,10 +40,12 @@ val collect_props :
   SV.t * int list ->
   svar_instance SVT.t ->
   LustreExpr.t SVT.t ->
-  prop list * int list -> LustreContract.svar -> prop list * int list
+  LustreContract.svar -> 
+  prop list * int list -> 
+  prop list * int list
 val collect_props_from_contract :
-  prop list * (int * int list * int list) list * (int * int list * int list) list ->
   node_instance -> 
+  prop list * (int * int list * int list) list * (int * int list * int list) list ->
   prop list * (int * int list * int list) list * (int * int list * int list) list
 val translate_subsystems :
   'a InputSystem.t ->
