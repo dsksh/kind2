@@ -165,13 +165,13 @@ let mk_observable node =
 let rec instantiate_node nodes id map node =
   let nm = instantiate_node_name node.LustreNode.name id in
   (*Format.printf "instantiate %a@." (LustreIdent.pp_print_ident true) node.name;*)
-  let cs, id = List.fold_left (instantiate_child nodes nm map) ([],id) node.calls in
+  let cs, cs_all, id = List.fold_right (instantiate_child nodes nm map) node.calls ([],[],id) in
   let c_ns = List.map (fun c -> c.name) cs in
   let node = if cs = [] then node else mk_observable node in
   let n = { name = nm; map = map; children = c_ns; src = node } in
-  n::cs, id
+  n, cs @ cs_all, id
 
-and instantiate_child nodes p_name map (cs0, id) c =
+and instantiate_child nodes p_name map c (cs0, cs_all0, id) =
   let map = SVT.copy map in
   (* Obtain the child node entry. *)
   let callee = LustreNode.node_of_name c.call_node_name nodes in
@@ -179,15 +179,17 @@ and instantiate_child nodes p_name map (cs0, id) c =
     List.map (fun ((_,sv0), (_,sv1)) -> register_arg map p_name sv0 sv1) in
   let _ = List.combine (D.bindings callee.outputs) (D.bindings c.call_outputs) |> 
     List.map (fun ((_,sv0), (_,sv1)) -> register_arg map p_name sv0 sv1) in
-  let cs, id = instantiate_node nodes (id+1) map callee in
-  cs0 @ cs, id
+  let ci, cs, id = instantiate_node nodes (id+1) map callee in
+  cs0 @ [ci], cs @ cs_all0, id
 
 let instantiate_main_nodes nodes =
   let map = SVT.create 7 in
-  let f (ns,id) n = 
-    if n.is_main then instantiate_node nodes (id+1) map n
+  let f n (ns,id) = 
+    if n.is_main then 
+      let n, cs, id = instantiate_node nodes (id+1) map n in 
+      n::cs, id
     else ns, id in
-  List.fold_left f ([],0) nodes
+  List.fold_right f nodes ([],0)
 
 let collect_props nn v_map e_map p (ps,pids) =
   let e0 = match SVT.find_opt e_map p.svar with
@@ -214,14 +216,14 @@ let collect_props_from_contract ni (ps,cs,goals) =
     let pid = id_of_node_instance ni.name in
     let goals = if ni.src.is_main then (pid, pids_a, pids_g)::goals else goals in
 
-    (* Transfer the As and Gs from the children. TODO: children of children. *)
-    let f cn (pids_a, pids_g) = 
-      match List.find_opt (fun (pid,_,_) -> pid = id_of_node_instance cn) cs with
-    | None -> (pids_a, pids_g)
-    | Some (_,a,g) -> (pids_a @ g, pids_g @ a) in
-    let pids_a, pids_g = List.fold_right f ni.children (pids_a, pids_g) in
+    (* Transfer the As and Gs from the children. *)
+    let f cn (a0, g0) = 
+      match List.find_opt (fun (pid,_,_,_,_) -> pid = id_of_node_instance cn) cs with
+    | None -> (a0, g0)
+    | Some (_,a,_,g,_) -> (g @ a0, a @ g0) in
+    let pids_a_i, pids_g_i = List.fold_right f ni.children ([],[]) in
 
-    let c = pid, pids_a, pids_g in
+    let c = pid, pids_a, pids_a_i, pids_g, pids_g_i in
     ps, c::cs, goals
 
 let translate_subsystems in_sys =

@@ -30,5 +30,5 @@ val enum_compat_pairs :
 val validate :
   NodeInstance.node_instance list ->
   NodeInstance.prop list ->
-  (smod * smod list * smod list) list ->
+  (smod * smod list * smod list * smod list * smod list) list ->
   (smod * smod list * smod list) list -> bool

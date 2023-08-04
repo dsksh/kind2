@@ -1,0 +1,45 @@
+
+node N0 (in: bool) returns (out: bool)
+(*@contract
+  assume in;
+  guarantee out;
+*)
+let
+  out = in;
+tel
+
+node N1 (in: bool) returns (out: bool)
+(*@contract
+  assume in;
+  guarantee out;
+*)
+var s : bool;
+let
+  s = N0(in);
+  out  = N0(s);
+tel
+
+node N2 (in: bool) returns (out: bool)
+(*@contract
+  assume in;
+  guarantee out;
+*)
+var s : bool;
+let
+  s = N1(in);
+  out  = N0(s);
+tel
+
+node Toplevel (_: bool) returns (out: bool)
+(*@contract
+  guarantee out;
+*)
+var fb: bool;
+let
+  fb  = N0(out);
+  out = N2(true -> pre fb);
+
+  --%MAIN;
+tel
+
+-- eof

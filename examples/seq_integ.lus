@@ -1,0 +1,25 @@
+node Integrator (in : real) returns (out : real);
+(*@contract
+  assume 0.0 <= in and in <= 1.0 ;
+  guarantee 0.0 <= out and out < 10.0 ; -- valid (k=1)
+*)
+let
+  out = in -> (in + 0.9* pre out);
+tel
+
+node Main (in : real) returns (out : real)
+(*@contract
+  assume 0.0 <= in and in <= 1.0 ;
+  --guarantee out < 9.0 ; -- invalid (requires a number of steps)
+  guarantee out < 10.0 ; -- valid (k=1 or k=2)
+*)
+let
+  --out = Integrator(in) ;
+  --out = Integrator(0.1 * Integrator(in)) ;
+  out = Integrator(0.1 * Integrator(0.1 * Integrator(in))) ;
+  --out = Integrator(0.1 * Integrator(0.1 * Integrator(0.1 * Integrator(0.1 * Integrator(in))))) ;
+
+  --%MAIN ;
+tel
+
+-- eof

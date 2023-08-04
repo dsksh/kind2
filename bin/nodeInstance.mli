@@ -28,13 +28,15 @@ val mk_subst_var :
 val mk_observable : LustreNode.t -> LustreNode.t
 val instantiate_node :
   LustreNode.t list ->
-  int -> svar_instance SVT.t -> LustreNode.t -> node_instance list * int
+  int -> svar_instance SVT.t -> LustreNode.t -> 
+  node_instance * node_instance list * int
 val instantiate_child :
   LustreNode.t list ->
   SV.t * int list ->
   svar_instance SVT.t ->
-  node_instance list * int ->
-  LustreNode.node_call -> node_instance list * int
+  LustreNode.node_call -> 
+  node_instance list * node_instance list * int ->
+  node_instance list * node_instance list * int
 val instantiate_main_nodes : LustreNode.t list -> node_instance list * int
 val collect_props :
   SV.t * int list ->
@@ -45,11 +47,11 @@ val collect_props :
   prop list * int list
 val collect_props_from_contract :
   node_instance -> 
-  prop list * (int * int list * int list) list * (int * int list * int list) list ->
-  prop list * (int * int list * int list) list * (int * int list * int list) list
+  prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list ->
+  prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list
 val translate_subsystems :
   'a InputSystem.t ->
-  node_instance list * prop list * (int * int list * int list) list * (int * int list * int list) list
+  node_instance list * prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list
 
 val pp_print_svar_instance :
   (SV.t * int list) option -> Format.formatter -> SV.t * int list -> unit

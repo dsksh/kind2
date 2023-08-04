@@ -233,7 +233,8 @@ let validate ns ps cs gs =
   let compats = compats @ (enum_compat_pairs is_compat_prop_pair ps ps) in
   Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") compats;
 
-  let impls = List.map (fun (mid,ids_a,ids_g) -> Impl (ids_a @ [mid], ids_g)) cs in
+  let impls = List.map 
+    (fun (mid,ids_a,ids_a_i,ids_g,ids_g_i) -> Impl (ids_a @ ids_a_i @ [mid], ids_g @ ids_g_i)) cs in
   Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") impls;
   (*let g_impls = List.map (fun (mid,ids_a,ids_g) -> Goal (Impl ((mid::ids_a), ids_g))) gs in*)
   let g_impls = List.map (fun (_,ids_a,ids_g) -> Goal (Impl (ids_a @ ids_m, ids_g))) gs in
