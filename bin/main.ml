@@ -5,6 +5,34 @@ open LustreContract*)
 open NodeInstance
 open CompValidator
 
+type file_oc = Leaves | Proof
+
+let create_ppf t =
+  (* Create root dir if needed. *)
+  Flags.output_dir () |> mk_dir ;
+  (*(* Create smt_trace dir if needed. *)
+  let tdir = Flags.Smt.trace_dir () in
+  mk_dir tdir ;
+  (* Create smt_trace subdir if needed. *)
+  let tdir = Filename.concat tdir (Flags.Smt.trace_subdir ()) in
+  mk_dir tdir ;*)
+
+  (* Name of the output file *)
+  let filename = 
+    Filename.concat
+      (Flags.output_dir ())
+      ( Format.sprintf "%s.%s" (Filename.basename (Flags.input_file ()))
+        (match t with | Leaves -> "leaves.lus" | Proof -> "proof.pl") )
+  in try
+    (* Open file for output, may fail *)
+    let oc = open_out filename in
+
+    (* Return formatter *)
+    Format.formatter_of_out_channel oc
+
+  with Sys_error e -> 
+    failwith (Format.asprintf "Failed to open trace file %s" e)
+
 let () = 
 (* Parse command-line flags. *)
 (try
@@ -59,10 +87,14 @@ try
   Format.printf "%a@." LustreNodePrinter.pp_print_subsystems input_system;
 
   let ns, ps, cs, gs = translate_subsystems input_system in
-  Format.printf "%a@." pp_print_nodes ns;
+  Format.printf "%a@.@." pp_print_nodes ns;
   Format.printf "%a@." pp_print_props ps;
 
-  if CompValidator.validate ns ps cs gs then
+  let leaves_ppf = create_ppf Leaves in
+  Format.fprintf leaves_ppf "%a@." NodeInstanceToLustre.pp_print_nodes ns;
+
+  let proof_ppf = create_ppf Proof in
+  if CompValidator.validate proof_ppf ns ps cs gs then
     Format.printf "valid@."
   else
     Format.printf "invalid@.";

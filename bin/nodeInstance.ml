@@ -28,13 +28,13 @@ let instantiate_node_name name id =
   SV.mk_state_var "node" [s] (Type.mk_int ()), [id]
 
 let id_of_node_instance name =
-  List.hd(snd name)
+  List.hd (snd name)
 
 let instantiate_svar (nn,id) map sv =
   match SVT.find_opt map sv with
   | Some svi -> svi
   | None -> 
-    ( (* Create a local name e.g. Self$id.v. *)  
+    ( (* Create a local name e.g. Self___id__v. *)  
       let sv = SV.mk_state_var (SV.name_of_state_var sv) (SV.scope_of_state_var nn)
       (SV.type_of_state_var sv) in
       sv, id )
@@ -43,14 +43,14 @@ let instantiate_svar_trie nn map t =
   D.bindings t |> List.map (fun (_, sv) -> instantiate_svar nn map sv)
 
 let register_arg map (nn, ni) svar0 svar =
-  (* Map CN.usr.v to PN$ni.v. *)  
+  (* Map CN.usr.v to PN___ni__v. *)  
   let n, ty = SV.name_of_state_var svar, SV.type_of_state_var svar in
   let sv = SV.mk_state_var n (SV.scope_of_state_var nn) ty in
   SVT.add map svar0 (sv,ni)
 
 let mk_sv_from_svi ?(is_const:bool = false) (sv,id) =
   let ss = Format.asprintf "%a" ( pp_print_list 
-    (fun ppf (s,i) -> Format.fprintf ppf "%s$%d." s i) "" )
+    (fun ppf (s,i) -> Format.fprintf ppf "%s___%d__" s i) "" )
     (List.combine (SV.scope_of_state_var sv) id) in
   SV.mk_state_var ~is_const:is_const 
     (ss^(SV.name_of_state_var sv)) [] (SV.type_of_state_var sv)
@@ -60,13 +60,21 @@ let mk_subst_sv map sv =
   | Some svi -> mk_sv_from_svi svi
   | None -> sv
 
-let mk_subst_var nno map var =
-  let mk_svar map sv =
+let mk_subst_var ?(inherited = None) nno map var =
+  let mk_svar sv =
     match SVT.find_opt map sv with
-    | Some svi -> svi
+    | Some (sv,id) -> ( match inherited with
+      | Some sc -> 
+        (* Case of getting a property inherited from a child instance (who manages the map) to 
+           a parent instance (inherited). Omit printing the scope. *)
+        if SV.scope_of_state_var sv = sc then
+          let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in
+          sv, []
+        else (sv,id)
+      | None -> (sv,id) )
     | None -> ( match nno with
       | Some (nn,id) -> 
-        ( (* Create a local name e.g. Self$id.v. *)  
+        ( (* Create a local name e.g. Self___id.v. *)  
           let sv = SV.mk_state_var (SV.name_of_state_var sv) (SV.scope_of_state_var nn)
           (SV.type_of_state_var sv) in
           sv, id )
@@ -76,11 +84,11 @@ let mk_subst_var nno map var =
   in
   if Var.is_const_state_var var then
     let sv = Var.state_var_of_state_var_instance var in
-    let svi = mk_svar map sv in
+    let svi = mk_svar sv in
     Var.mk_const_state_var (mk_sv_from_svi ~is_const:true svi)
   else if Var.is_state_var_instance var then
     let sv = Var.state_var_of_state_var_instance var in
-    let svi = mk_svar map sv in
+    let svi = mk_svar sv in
     let o = Var.offset_of_state_var_instance var in
     Var.mk_state_var_instance (mk_sv_from_svi svi) o
   else (* is_free_var *)
@@ -243,9 +251,9 @@ let pp_print_svar_instance nno ppf (sv,id) =
     else false
   | None -> true in
   if b then (
-    let pr ppf (s,id) = Format.fprintf ppf "%s$%d" s id in
-    Format.fprintf ppf "%a."
-      (pp_print_list pr ".") (List.combine (SV.scope_of_state_var sv) id) );
+    let pr ppf (s,id) = Format.fprintf ppf "%s___%d" s id in
+    Format.fprintf ppf "%a__"
+      (pp_print_list pr "__") (List.combine (SV.scope_of_state_var sv) id) );
   Format.fprintf ppf "%s" (SV.name_of_state_var sv)
 
 let pp_print_svi_typed nno ppf sv =

@@ -24,6 +24,7 @@ val register_arg : (SV.t * 'a) SVT.t -> SV.t * 'a -> SVT.key -> SV.t -> unit
 val mk_sv_from_svi : ?is_const:bool -> SV.t * int list -> SV.t
 val mk_subst_sv : (SV.t * int list) SVT.t -> SVT.key -> SV.t
 val mk_subst_var :
+  ?inherited:string list option ->
   (SV.t * int list) option -> (SV.t * int list) SVT.t -> Var.t -> Var.t
 val mk_observable : LustreNode.t -> LustreNode.t
 val instantiate_node :

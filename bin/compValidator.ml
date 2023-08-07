@@ -1,9 +1,7 @@
 open Lib
 open NodeInstance
 
-let init () = 
-  Swipl.initialise ();
-  Swipl.load_source {|
+let prelude = {|
 :- use_module(library(chr)).
 :- use_module(library(lists)).
 :- chr_option(debug, on).
@@ -54,7 +52,12 @@ reducesTo_(Goal, C) :-
   call(user:'$enumerate_constraints'(C)).
 reducesTo(Goal, Constraints) :-
   findall(Constraint, reducesTo_(Goal, Constraint), Constraints).
-|} 
+|}
+
+let init ppf = 
+  Swipl.initialise ();
+  Swipl.load_source prelude;
+  Format.fprintf ppf "%s" prelude
 
 type smod = int
 
@@ -63,6 +66,39 @@ type t =
   | Compat of smod * smod
   | Impl of smod list * smod list
   | Goal of t
+
+let rec pp_print_constr ppf = function
+| M i -> Format.fprintf ppf "M(%d)" i
+| Compat (i,j) -> Format.fprintf ppf "Compat(%d,%d)" i j
+| Impl (i,j) -> 
+  Format.fprintf ppf "Impl([%a], [%a])" 
+    (Lib.pp_print_list Format.pp_print_int ",") i
+    (Lib.pp_print_list Format.pp_print_int ",") j
+| Goal c -> Format.fprintf ppf "G(%a)" pp_print_constr c
+
+let rec pp_print_term ctx ppf t =
+  let n, al = Swipl.extract_functor ctx t in
+  match Swipl.show_atom n, al with
+  | "n", [a] -> let i = Swipl.extract_int ctx a in
+    Format.fprintf ppf "n(%d)" i
+  | "compat", [a1;a2] ->
+    let i = Swipl.extract_int ctx a1 in
+    let j = Swipl.extract_int ctx a2 in
+    Format.fprintf ppf "compat(%d,%d)" i j
+  | "impl", [a1;a2] -> 
+    let l1 = Swipl.extract_list ctx a1 in
+    let l2 = Swipl.extract_list ctx a2 in
+    let l1 = List.map (fun a -> Swipl.extract_int ctx a) l1 in
+    let l2 = List.map (fun a -> Swipl.extract_int ctx a) l2 in
+    Format.fprintf ppf "impl([%a], [%a])"
+      (Lib.pp_print_list Format.pp_print_int ",") l1
+      (Lib.pp_print_list Format.pp_print_int ",") l2
+  | "g", [t] ->
+    Format.fprintf ppf "g(%a)" (pp_print_term ctx) t
+  | n, _ ->
+    Format.fprintf ppf "%s/%d" n (List.length al)
+
+(* *)
 
 let smod ctx i = 
   let i = Swipl.encode_integer ctx i in
@@ -100,48 +136,20 @@ let rec encode ctx = function
   let t = encode ctx t in
   Swipl.Syntax.(app ("g" /@ 1) [t])
 
-let encode ctx cs =
+let encode ppf ctx cs =
   let cs = List.map (encode ctx) cs in
   let c :: cs = cs in
+  Format.fprintf ppf "%a,@ %a" 
+    (pp_print_term ctx) c 
+    (pp_print_list (pp_print_term ctx) ",@ ") cs;
   List.fold_left Swipl.Syntax.(fun acc l -> Swipl.Syntax.(&&) acc l) c cs
 
 let reducesTo goal result = Swipl.Syntax.(app ("reducesTo" /@ 2) [goal; result])
 
-let rec pp_print_constr ppf = function
-| M i -> Format.fprintf ppf "M(%d)" i
-| Compat (i,j) -> Format.fprintf ppf "Compat(%d,%d)" i j
-| Impl (i,j) -> 
-  Format.fprintf ppf "Impl([%a], [%a])" 
-    (Lib.pp_print_list Format.pp_print_int ",") i
-    (Lib.pp_print_list Format.pp_print_int ",") j
-| Goal c -> Format.fprintf ppf "G(%a)" pp_print_constr c
-
-let rec pp_print_term ctx ppf t =
-  let n, al = Swipl.extract_functor ctx t in
-  match Swipl.show_atom n, al with
-  | "n", [a] -> let i = Swipl.extract_int ctx a in
-    Format.fprintf ppf "n(%d)" i
-  | "compat", [a1;a2] ->
-    let i = Swipl.extract_int ctx a1 in
-    let j = Swipl.extract_int ctx a2 in
-    Format.fprintf ppf "compat(%d,%d)" i j
-  | "impl", [a1;a2] -> 
-    let l1 = Swipl.extract_list ctx a1 in
-    let l2 = Swipl.extract_list ctx a2 in
-    let l1 = List.map (fun a -> Swipl.extract_int ctx a) l1 in
-    let l2 = List.map (fun a -> Swipl.extract_int ctx a) l2 in
-    Format.fprintf ppf "impl([%a], [%a])"
-      (Lib.pp_print_list Format.pp_print_int ",") l1
-      (Lib.pp_print_list Format.pp_print_int ",") l2
-  | "g", [t] ->
-    Format.fprintf ppf "g(%a)" (pp_print_term ctx) t
-  | n, _ ->
-    Format.fprintf ppf "%s/%d" n (List.length al)
-
 let decode ctx t =
   (*Swipl.show_atom (Swipl.extract_atom ctx t)*)
-  let n, a = Swipl.extract_name_arity ctx t in
-  (*Format.printf "%s/%d\n" (Swipl.show_atom n) a;*)
+  (*let n, a = Swipl.extract_name_arity ctx t in
+  Format.printf "%s/%d\n" (Swipl.show_atom n) a;*)
   Format.printf "%a\n" (pp_print_term ctx) t
   (*Swipl.extract_list ctx t*)
 let decode ctx t =
@@ -222,7 +230,7 @@ let enum_compat_pairs cf np1 l2 ps =
 let enum_compat_pairs cf l1 l2 =
   List.fold_right (fun n -> enum_compat_pairs cf n l2) l1 []
 
-let validate ns ps cs gs =
+let validate ppf ns ps cs gs =
   let ids_m = List.map (fun n -> id_of_node_instance n.name) ns in
   let ms = List.map (fun i -> M i) ids_m in
   let ms = ms @ (List.map (fun p -> M p.id) ps) in
@@ -241,15 +249,17 @@ let validate ns ps cs gs =
   Format.printf "%a@." (pp_print_list pp_print_constr ",@ ") g_impls;
 
   let cs = ms @ compats @ impls @ g_impls in
-  init ();
+  init ppf;
   Swipl.with_ctx ( fun ctx ->
-    let cs = encode ctx cs in
+    Format.fprintf ppf "@[<hv 2>reducesTo([";
+    let cs = encode ppf ctx cs in
     let res = Swipl.fresh ctx in
+    Format.fprintf ppf "],@;res)@]@.";
+
     Swipl.call ctx (reducesTo cs res);
     let _ = decode ctx res in ()
   );
   print_endline "done";
   true
-
 
 (* eof *)

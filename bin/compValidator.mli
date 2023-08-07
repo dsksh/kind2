@@ -9,11 +9,9 @@ type t =
 
 val smod : Swipl.ctx -> int -> Swipl.t
 val compat : Swipl.ctx -> int -> int -> Swipl.t
-val compat : Swipl.ctx -> int -> int -> Swipl.t
 val impl : Swipl.ctx -> int list -> int list -> Swipl.t
 val goal : Swipl.t -> Swipl.t
-val encode : Swipl.ctx -> t -> Swipl.t
-val encode : Swipl.ctx -> t list -> Swipl.t
+val encode : Format.formatter -> Swipl.ctx -> t list -> Swipl.t
 val reducesTo : Swipl.t -> Swipl.t -> Swipl.t
 val pp_print_constr : Format.formatter -> t -> unit
 val pp_print_term : Swipl.ctx -> Format.formatter -> Swipl.t -> unit
@@ -28,6 +26,7 @@ val enum_compat_pairs :
   ('a -> 'b -> 'c list -> 'c list) -> 'a list -> 'b list -> 'c list
 
 val validate :
+  Format.formatter ->
   NodeInstance.node_instance list ->
   NodeInstance.prop list ->
   (smod * smod list * smod list * smod list * smod list) list ->
