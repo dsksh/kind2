@@ -1,9 +1,4 @@
 open Lib
-(*open LustreNode
-open LustreContract*)
-
-open NodeInstance
-open CompValidator
 
 type file_oc = Leaves | Proof
 
@@ -31,7 +26,7 @@ let create_ppf t =
     Format.formatter_of_out_channel oc
 
   with Sys_error e -> 
-    failwith (Format.asprintf "Failed to open trace file %s" e)
+    failwith (Format.asprintf "Failed to open file %s" e)
 
 let () = 
 (* Parse command-line flags. *)
@@ -82,23 +77,31 @@ try
         KEvent.log L_note "No parse errors found!";
         KEvent.terminate_log ();
         exit 0 ) in
-  KEvent.log L_debug "Input System built";
+  KEvent.log L_info "Lustre program parsed";
+  KEvent.log L_debug "%a" LustreNodePrinter.pp_print_subsystems input_system;
 
-  Format.printf "%a@." LustreNodePrinter.pp_print_subsystems input_system;
+  let ns, ps, cs, gs = NodeInstance.translate_subsystems input_system in
+  KEvent.log L_info "Node instances generated";
+  KEvent.log L_debug "%a@." NodeInstance.pp_print_nodes ns;
+  KEvent.log L_debug "%a" NodeInstance.pp_print_props ps;
 
-  let ns, ps, cs, gs = translate_subsystems input_system in
-  Format.printf "%a@.@." pp_print_nodes ns;
-  Format.printf "%a@." pp_print_props ps;
-
+  KEvent.log L_info "Printing leaf node instances";
   let leaves_ppf = create_ppf Leaves in
-  Format.fprintf leaves_ppf "%a@." NodeInstanceToLustre.pp_print_nodes ns;
+  Format.fprintf leaves_ppf "%a" NodeInstanceToLustre.pp_print_nodes ns;
+  KEvent.log L_debug "%a" NodeInstanceToLustre.pp_print_nodes ns;
 
+  KEvent.log L_info "Printing a CHR proof script";
+  let cs = CompValidator.translate ns ps cs gs in
   let proof_ppf = create_ppf Proof in
-  if CompValidator.validate proof_ppf ns ps cs gs then
+  Format.fprintf proof_ppf "%a" CompValidator.pp_print_script cs;
+  KEvent.log L_debug "%a" CompValidator.pp_print_script cs;
+
+  (*if CompValidator.validate cs then
     Format.printf "valid@."
   else
     Format.printf "invalid@.";
-
+  *)
+  KEvent.log L_info "Done";
   ()
 with
 (* Could not create input system. *)
