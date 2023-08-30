@@ -1,6 +1,7 @@
 # Log files.
 *.log
 *.err
+*.out
 
 # Generated opam switch.
 _opam
@@ -29,3 +30,6 @@ tmp/kind2
 # GitHub deploy key
 travis_key
 travis_key.pub
+
+#
+examples_misc

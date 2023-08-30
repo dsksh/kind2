@@ -1,0 +1,354 @@
+
+--
+-- Constants
+--
+
+const SampleTime = 0.05;
+
+const alpha_i = 5.0/37.5;
+
+const R = 5.7;
+const L = 0.2;
+const K_e = 7.16e-2;
+const K_tau = 7.2e-2;
+const J_M = 0.11e-3;
+const J_I = 1.3e-3;
+const D = 6.0e-5;
+
+const pi = 3.141592;
+const alpha_T = 1.5/1000.0;
+
+const Vs = 24.0;
+
+const V_A_max = 5.0;
+const V_A_min = 0.0;
+const alpha_A = 1023.0 / 5.0;
+
+const m = 8.0;
+const alpha_P = 100.0 / 255.0; -- 100 / (2^m - 1)
+const u_min = 0.0;
+const u_max = 100.0;
+
+const SV = 1000.0;
+const kc = 0.1;
+--const T_I = 0.5;
+const T_I = 0.0;
+--const T_D = 0.01;
+const T_D = 0.0;
+
+--
+-- Controller
+--
+
+node ADConverter (v_A : real) returns (d_A : real);
+var r : real;
+let
+  r = alpha_A * ((if v_A > V_A_max then V_A_max else if v_A < V_A_min then V_A_min else v_A) - V_A_min);
+  d_A = real(int(r));
+tel
+
+node ADConverters (v_N, v_I : real) returns (d_N, d_I : real);
+let
+  d_N = ADConverter(v_N);
+  d_I = ADConverter(v_I);
+tel
+
+node Decoder (d_N, d_i : real) returns (N_, i_ : real);
+let
+  N_ = (1.0/alpha_T) * ((1.0/alpha_A) * d_N + V_A_min);
+  i_ = (1.0/alpha_i) * ((1.0/alpha_A) * d_N + V_A_min);
+tel
+
+node Encoder (u : real) returns (d_P : real);
+let
+  d_P = (255.0/(u_max-u_min)) * (u + u_min);
+tel
+
+node PG (const t, pf: int; const a, b: real) returns (o: real)
+(* contract
+  assume 2 <= t;
+  assume 0 <= pf and pf <= 2*t;
+  assume 0.01 < a;
+*)
+var s, l: int;
+let
+  s = 0 -> (pre s) + 1;
+  l = 0 -> if s+pf-(pre l) >= 2*t then (pre l) + 2*t else (pre l);
+  o = if s+pf-l >= t then b else a+b;
+tel
+
+node PID (N_ : real) returns (u : real);
+var u_, e, i, d : real;
+let
+  u = if u_ > u_max then u_max else if u_ < u_min then u_min else u_;
+  u_ = kc * (e + T_I * i + T_D * d);
+  e = SV - N_;
+  i = 0.0 -> (pre i) + SampleTime * pre e;
+  d = (0.0 -> (e - pre e)) / SampleTime;
+tel
+
+node ControllerSub (d_N, d_i : real) returns (d_P : real);
+var N_, i_ : real;
+let
+  N_, i_ = Decoder(d_N, d_i);
+  --d_P = Encoder(100.0);
+  --d_P = Encoder(PG(30, 0, 100.0, 0.0));
+  d_P = Encoder(PID(N_));
+tel
+
+node PulseGenerator (d_P : real) returns (u_P : real);
+var iv : int;
+let
+  iv = int(d_P);
+  u_P = alpha_P * real(iv - iv/256);
+tel
+
+--
+-- Plant
+--
+
+node MotorDriver (u_M, i_M : real) returns (v_A, v_i : real);
+(* contract
+  assume u_M = 100.0;
+  --assume i_M < 5.0;
+  guarantee v_A = 24.0;
+ *)
+let
+  v_A = Vs * 0.01 * u_M;
+  v_i = alpha_i * i_M;
+tel
+
+node MotorDisk (v_M : real) returns (omega, i_m : real);
+(* contract
+  assume 0.0 <= v_M and v_M <= 24.0;
+  guarantee omega < 320.0; -- 315.0;
+  guarantee i_m < 7.0;
+
+  --guarantee i_m > 4.0 => omega < 200.0;
+  --guarantee i_m > 3.5 => omega < 279.0;
+  guarantee i_m > 3.5 => omega < 279.0;
+  --guarantee omega * i_m <= 900.0;
+ *)
+var integ, int1, Gain, Gain2 : real;
+let
+  omega = int1;
+  i_m = integ;
+  int1 = 0.0 -> (pre int1) + SampleTime * pre Gain2;
+  Gain2 = (1.0/(J_M+J_I)) * (K_tau * integ - D * int1);
+  integ = 0.0 -> (pre integ) + SampleTime * pre Gain;
+  Gain = (1.0/L) * (v_M - R*integ - K_e*int1);
+tel
+
+node Tachogenerator (omega : real) returns (v_N : real);
+let
+  v_N = alpha_T * (60.0/(2.0*pi)) * omega;
+tel
+
+--
+-- System
+--
+
+node Controller (c : int; v_N, v_I : real) returns (u_P : real);
+(*@contract
+  assume c = (0 -> 1 + pre c);
+
+  ----assume v_N = 1.5 and 0.01 < v_I and v_I <= 0.02;
+  ----guarantee 33.0 <= u_P and u_P <= 34.0;
+  --assume c <= 1 => v_N = 0.0;
+  --assume (2 <= c and c <= 5) => (0.2 < v_N and v_N < 0.7);
+  --assume c = 0 => v_I = 0.0;
+  --assume c = 1 => v_I = 0.8;
+  --assume (2 <= c and c <= 5) => (0.4 < v_I and v_I <= 0.8);
+  --guarantee c <= 1 => u_P = 100.0;
+  --guarantee (1 <= c and c <= 5) => (45.0 <= u_P and u_P <= 100.0);
+
+  --assume (6 <= c and c <= 10) => (0.4 < v_N and v_N < 1.4);
+  --assume (6 <= c and c <= 10) => (0.01 < v_I and v_I <= 0.7);
+  --guarantee (6 <= c and c <= 10) => (50.0 <= u_P and u_P <= 75.0);
+
+  --guarantee c = 2 => (40.0 < u_P and u_P < 90.0);
+  --guarantee c = 3 => (76.0 < u_P and u_P < 83.0);
+  --guarantee c = 4 => (72.0 < u_P and u_P < 76.0);
+  --guarantee c = 5 => (66.0 < u_P and u_P < 72.0);
+  --guarantee c = 6 => (62.0 < u_P and u_P < 66.0);
+  --guarantee c = 7 => (58.0 < u_P and u_P < 62.0);
+  --guarantee c = 8 => (56.0 < u_P and u_P < 58.0);
+  --guarantee c = 9 => (53.0 < u_P and u_P < 56.0);
+  --guarantee c = 10 => (50.0 < u_P and u_P < 53.0);
+
+  --assume c <= 1 => v_N = 0.0;
+  --assume c = 0 => v_I = 0.0;
+  --assume c = 1 => v_I = 0.8;
+  --assume c = 2 => (0.2 < v_N and v_N < 0.23);
+  --assume c = 2 => (0.4 < v_I and v_I < 0.5);
+  --assume c = 3 => (0.33 < v_N and v_N < 0.35);
+  --assume c = 3 => (0.4 < v_I and v_I < 0.5);
+  --assume c = 4 => (0.45 < v_N and v_N < 0.48);
+  --assume c = 4 => (0.36 < v_I and v_I < 0.45);
+  --assume c = 5 => (0.55 < v_N and v_N < 0.6);
+  --assume c = 5 => (0.3 < v_I and v_I < 0.39);
+  --assume c = 6 => (0.65 < v_N and v_N < 0.7);
+  --assume c = 6 => (0.29 < v_I and v_I < 0.37);
+  --assume c = 7 => (0.7 < v_N and v_N < 0.8);
+  --assume c = 7 => (0.23 < v_I and v_I < 0.32);
+  --assume c = 8 => (0.8 < v_N and v_N < 0.9);
+  --assume c = 8 => (0.2 < v_I and v_I < 0.33);
+  --assume c = 9 => (0.85 < v_N and v_N < 0.95);
+  --assume c = 9 => (0.17 < v_I and v_I < 0.35);
+
+  --guarantee c <= 1 => u_P = 100.0;
+  --guarantee c = 2 => (85.0 < u_P and u_P < 90.0);
+  --guarantee c = 3 => (80.0 < u_P and u_P < 85.0);
+  --guarantee c = 4 => (72.0 < u_P and u_P < 78.0);
+  --guarantee c = 5 => (69.0 < u_P and u_P < 74.0);
+  --guarantee c = 6 => (63.0 < u_P and u_P < 69.0);
+  --guarantee c = 7 => (58.0 < u_P and u_P < 69.0);
+  --guarantee c = 8 => (52.0 < u_P and u_P < 62.0);
+  --guarantee c = 9 => (49.0 < u_P and u_P < 61.0);
+
+  --assume (10 <= c and c <= 14) => (0.85 < v_N and v_N < 1.1);
+  --assume (10 <= c and c <= 14) => (0.1 < v_I and v_I < 0.2);
+  ----guarantee (10 <= c and c <= 14) => (32.0 <= u_P and u_P < 72.0); -- TODO
+  --guarantee (10 <= c and c <= 10) => (u_P < 60.0); -- TODO
+
+  assume 0.0 <= v_N and v_N < 4.6;
+  assume v_I < 0.95;
+  assume v_N / alpha_T * 0.1 <= 105.0;
+  guarantee 0.0 <= u_P and u_P <= 100.0;
+  guarantee true -> pre (u_P + v_N / alpha_T * 0.1) <= 105.0;
+  guarantee true -> pre (u_P + v_N / alpha_T * 0.1) >= 95.0;
+
+ *)
+var d_N, d_I, d_P : real;
+let
+  d_N, d_I = ADConverters(v_N, v_I);
+  d_P = ControllerSub(d_N, d_I);
+  u_P = PulseGenerator(d_P);
+tel
+
+node Plant (c : int; u_P : real) returns (v_N, v_I : real);
+(*@contract
+  assume c = (0 -> 1 + pre c);
+
+  --assume c <= 1 => u_P = 100.0;
+  --assume (2 <= c and c <= 5) => (70.0 <= u_P and u_P < 80.0);
+  ----assume true -> u_P <= pre u_P;
+  --guarantee c <= 1 => v_N = 0.0;
+  --guarantee (2 <= c and c <= 5) => (0.0 < v_N and v_N < 0.7);
+  ----guarantee c <= 10 => (true -> v_N >= pre v_N);
+  --guarantee c = 0 => v_I = 0.0;
+  --guarantee c = 1 => v_I = 0.8;
+  --guarantee (2 <= c and c <= 5) => (0.2 < v_I and v_I <= 0.8);
+  ----guarantee 2 <= c => (true -> v_I <= 0.1 + pre v_I);
+
+  --assume (6 <= c and c <= 10) => (50.0 <= u_P and u_P < 72.0);
+  --guarantee (6 <= c and c <= 10) => (0.4 < v_N and v_N < 1.4);
+  --guarantee (6 <= c and c <= 10) => (0.01 < v_I and v_I <= 0.7);
+
+  --assume c = 2 => (85.0 < u_P and u_P < 89.0);
+  --assume c = 3 => (76.0 < u_P and u_P < 83.0);
+  --assume c = 4 => (72.0 < u_P and u_P < 76.0);
+  --assume c = 5 => (66.0 < u_P and u_P < 72.0);
+  --assume c = 6 => (62.0 < u_P and u_P < 66.0);
+  --assume c = 7 => (58.0 < u_P and u_P < 62.0);
+  --assume c = 8 => (56.0 < u_P and u_P < 58.0);
+  --assume c = 9 => (53.0 < u_P and u_P < 56.0);
+  --assume c = 10 => (50.0 < u_P and u_P < 53.0);
+
+  ----assume (11 <= c and c <= 20) => (30.0 <= u_P and u_P <= 60.0);
+  --assume (11 <= c and c <= 15) => (40.0 <= u_P and u_P < 53.0);
+  --assume (16 <= c and c <= 20) => (35.0 <= u_P and u_P < 45.0);
+  ----guarantee (11 <= c and c <= 20) => (0.4 < v_N and v_N < 1.4);
+  --guarantee (11 <= c and c <= 20) => (0.5 < v_N and v_N < 1.5);
+  --guarantee (11 <= c and c <= 20) => (0.0 < v_I and v_I < 0.1);
+
+  --assume c <= 1 => u_P = 100.0;
+  --guarantee c <= 1 => v_N = 0.0;
+  --guarantee c = 0 => v_I = 0.0;
+  --guarantee c = 1 => v_I = 0.8;
+
+  --assume c = 2 => (80.0 < u_P and u_P < 90.0);
+  --assume c = 3 => (80.0 < u_P and u_P < 85.0);
+  --assume c = 4 => (72.0 < u_P and u_P < 77.0);
+  --assume c = 5 => (69.0 < u_P and u_P < 74.0);
+  --assume c = 6 => (63.0 < u_P and u_P < 69.0);
+  --assume c = 7 => (58.0 < u_P and u_P < 69.0);
+  --assume c = 8 => (52.0 < u_P and u_P < 62.0);
+  --assume c = 9 => (49.0 < u_P and u_P < 61.0);
+
+  --guarantee c = 2 => (0.2 < v_N and v_N < 0.23);
+  --guarantee c = 2 => (0.4 < v_I and v_I < 0.5);
+  --guarantee c = 3 => (0.33 < v_N and v_N < 0.35);
+  --guarantee c = 3 => (0.4 < v_I and v_I < 0.5);
+  --guarantee c = 4 => (0.45 < v_N and v_N < 0.48);
+  --guarantee c = 4 => (0.36 < v_I and v_I < 0.45);
+  --guarantee c = 5 => (0.55 < v_N and v_N < 0.6);
+  --guarantee c = 5 => (0.3 < v_I and v_I < 0.39);
+  --guarantee c = 6 => (0.65 < v_N and v_N < 0.7);
+  --guarantee c = 6 => (0.29 < v_I and v_I < 0.37);
+  --guarantee c = 7 => (0.7 < v_N and v_N < 0.8);
+  --guarantee c = 7 => (0.23 < v_I and v_I < 0.32);
+  --guarantee c = 8 => (0.8 < v_N and v_N < 0.9);
+  --guarantee c = 8 => (0.2 < v_I and v_I < 0.33);
+  --guarantee c = 9 => (0.85 < v_N and v_N < 0.95);
+  --guarantee c = 9 => (0.17 < v_I and v_I < 0.35);
+
+  --assume (10 <= c and c <= 14) => (32.0 <= u_P and u_P < 72.0);
+  ----assume (16 <= c and c <= 20) => (35.0 <= u_P and u_P < 45.0);
+  ------guarantee (11 <= c and c <= 20) => (0.4 < v_N and v_N < 1.4);
+  --guarantee (10 <= c and c <= 14) => (0.8 < v_N and v_N < 1.4);
+  ----guarantee (10 <= c and c <= 14) => (0.03 < v_I and v_I < 0.3);
+  --guarantee (10 <= c and c <= 14) => (0.0 < v_I);
+
+  assume 0.0 <= u_P and u_P <= 100.0;
+  assume true -> pre (u_P + v_N / alpha_T * 0.1) <= 105.0;
+  assume true -> pre (u_P + v_N / alpha_T * 0.1) >= 95.0;
+  guarantee 0.0 <= v_N and v_N < 4.6;
+  guarantee v_I < 0.95;
+  guarantee v_N / alpha_T * 0.1 <= 105.0;
+
+  --guarantee v_I > 0.47 => v_N < 4.0;
+  --guarantee v_I > 0.3 => v_N < 3.0;
+
+  guarantee true -> ( c >= 10 => pre v_N > 0.6 );
+  guarantee true -> ( c >= 20 => pre v_N > 0.9 );
+
+ *)
+var v_A, omega, i_M : real;
+let
+  v_A, v_I = MotorDriver(u_P, i_M);
+  omega, i_M = MotorDisk(v_A);
+  v_N = Tachogenerator(omega);
+tel
+
+node Toplevel (c : int) returns (v_N, v_I, u_P : real);
+(*@contract
+  assume c = 0 -> c = 1 + pre c;
+
+  --guarantee v_N < 5.0; -- valid (k=15; by one state invariant generator after 83.437s)
+  --guarantee v_N < 3.0; -- 
+
+  --guarantee c <= 1 => u_P = 100.0;
+  --guarantee c <= 1 => v_N = 0.0;
+  --guarantee c = 0 => v_I = 0.0;
+  --guarantee c = 1 => v_I = 0.8;
+
+  --guarantee v_I > 0.46 => v_N < 4.0;
+  --guarantee v_I > 0.3 => v_N < 3.0;
+
+  guarantee 0.0 <= u_P and u_P <= 100.0;
+  guarantee true -> pre (u_P + (v_N / alpha_T) * 0.1) <= 105.0;
+  guarantee true -> pre (u_P + (v_N / alpha_T) * 0.1) >= 95.0;
+  guarantee 0.0 <= v_N and v_N < 4.6;
+  guarantee v_I < 0.95;
+  guarantee v_N / alpha_T * 0.1 <= 105.0;
+
+  guarantee true -> ( c >= 10 => pre v_N > 0.6 );
+  --guarantee true -> ( c >= 20 => pre v_N > 0.9 );
+ *)
+let
+  u_P = Controller(c, v_N, v_I);
+  v_N, v_I = Plant(c, u_P);
+tel
+
+-- eof

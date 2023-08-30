@@ -1,0 +1,85 @@
+
+node GClock(c : int) returns (engaged : bool);
+let 
+  engaged = (c = 0) -> (c = 1 + pre c);
+tel
+
+node Filter_body(in : real) returns (out : real)
+(* contract
+  assume -1.0 <= in and in <= 1.0 ;
+  guarantee -1.0 < out and out < 1.0 ; -- valid (at 25)
+*)
+var sum, D1, D2: real;
+let
+  sum = 0.0582*in - (-1.49*D1) - 0.881*D2;
+  D1 = 0.0 -> pre sum;
+  D2 = 0.0 -> pre D1;
+  out = (sum - D2) / 1.25;
+
+  -- MAIN ;
+tel
+
+node Filter1(in : real) returns (c : int; out : real)
+(*@contract
+  assume -1.0 <= in and in <= 1.0 ;
+  --guarantee -1.0 < out and out < 1.0 ; -- valid (at 25)
+  guarantee c < 30 => out < 0.9 ; -- valid (at 30)
+*)
+let
+  c = 0 -> 1 + pre c;
+  out = Filter_body(in);
+tel
+
+node Filter2(c : int; in : real) returns (out : real)
+(*@contract
+  assume GClock(c) ;
+  assume -1.0 <= in and in <= 1.0 ;
+  --guarantee -1.0 < out and out < 1.0 ; -- valid (at 25)
+  guarantee c < 30 => out < 0.9 ; -- valid (at 30)
+*)
+let
+  out = Filter_body(in);
+tel
+
+node Main1(in : real) returns (c, lc : int; out : real)
+(*@contract
+  assume -1.0 <= in and in <= 1.0 ;
+  --guarantee out < 1.0 ;
+  guarantee c < 300 => out < 1.0 ; -- timeout
+  --guarantee lc < 30 => out < 1.0 ; -- valid
+*)
+var po : real; plc : int; cc : bool;
+let
+  c = 0 -> if pre c = 9 then 0 else 1 + pre c;
+  cc = c = 0;
+  plc, po = (0, 0.0) -> pre (lc, out);
+  lc, out = merge(
+    cc;
+    (activate Filter1 every cc)(in);
+    (plc, po) when not cc );
+
+  -- MAIN ;
+tel
+
+node Main2(c : int; in : real) returns (out : real)
+(*@contract
+  assume GClock(c);
+  assume -1.0 <= in and in <= 1.0 ;
+  --guarantee out < 1.0 ;
+  guarantee c < 300 => out < 1.0 ;
+  --guarantee lc < 30 => out < 1.0 ;
+*)
+var po : real; lc : int; cc : bool;
+let
+  lc = 0 -> if pre lc = 9 then 0 else 1 + pre lc;
+  cc = lc = 0;
+  po = 0.0 -> pre out;
+  out = merge(
+    cc;
+    (activate Filter2 every cc)(c, in);
+    po when not cc );
+
+  -- MAIN ;
+tel
+
+-- eof
