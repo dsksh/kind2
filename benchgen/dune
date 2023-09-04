@@ -1,0 +1,9 @@
+
+(env
+  (dev
+    (flags (:standard -warn-error -all))))
+
+(executable
+ (public_name lustre_cr_benchgen)
+ (name main)
+ (libraries lustre_comp kind2))
