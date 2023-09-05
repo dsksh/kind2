@@ -1,5 +1,6 @@
 open Format
 open Lib
+open CompValidator
 
 type node = 
   | N of int
@@ -29,16 +30,21 @@ type t = {
   guarantee : (int * int) list;
 }
 
+let pp_print_c ppf t =
+  let ids = List.sort Int.compare (t.id::t.children) in
+  Format.fprintf ppf "%a" 
+    (pp_print_list (fun ppf -> Format.fprintf ppf "M%d") "*") ids
+
 let pp_print_p ppf (i,j) =
-  Format.fprintf ppf "P%d" i;
+  Format.fprintf ppf "P%d" (- i);
   let rec f k = if k > 0 then
     (Format.fprintf ppf "'"; f (k-1))
   in
   f j
 
-let pp_print_t ppf t = Format.fprintf ppf "{%a} M%d {%a}" 
+let pp_print_t ppf t = Format.fprintf ppf "{%a} %a {%a}" 
   (pp_print_list pp_print_p "*") t.assume
-  t.id
+  pp_print_c t
   (pp_print_list pp_print_p "*") t.guarantee
 
 let loop f t_tbl tpl_list =
@@ -64,20 +70,21 @@ let loop f t_tbl tpl_list =
   in
   g tpl_list; ()
 
-let parse p_tbl (i, n, j) =
+let parse m_tbl (i, n, j) =
   let id, cs = match n with
   | N k -> k, []
   | C (k,ns) -> 
     let is = List.map id_of_node ns in
     k, is
   in
-  let p_idx idx = match Hashtbl.find_opt p_tbl idx with
-  | None -> Hashtbl.add p_tbl idx 1; 0
-  | Some k -> Hashtbl.replace p_tbl idx (k + 1); k
+  let m_idx idx = match Hashtbl.find_opt m_tbl idx with
+  | None -> Hashtbl.add m_tbl idx 1; 0
+  | Some k -> Hashtbl.replace m_tbl idx (k + 1); k
   in
+  let _ = m_idx id in
   { id = id; children = cs; 
-    assume = if i = 0 then [] else [i, p_idx i]; 
-    guarantee = if j = 0 then [] else [j, p_idx j] }
+    assume = if i = 0 then [] else [- i, m_idx (- i)]; 
+    guarantee = if j = 0 then [] else [- j, m_idx (- j)] }
 
 let flatten t_tbl t =
   (*let t = { t with guarantee = index_g g_tbl t.guarantee } in*)
@@ -91,6 +98,34 @@ let flatten t_tbl t =
       { t with assume = a; guarantee = g }
     in
     List.fold_right inherit_ps t.children t
+
+(* *)
+
+let flatten_pid p_base (i,j) = if j <= 0 then i else i*p_base - j
+
+let rec enum_compat_pairs ps0 = function
+| m1::ms ->
+  let ps1 = List.fold_right (fun m2 ps1 -> (Compat (m1,m2))::ps1) ms [] in
+  enum_compat_pairs (ps0 @ ps1) ms
+| [] -> ps0
+
+let enum_compat_n_p_pairs p_base ps accum t = 
+  let gs = List.map (flatten_pid p_base) t.guarantee in
+  let f accum p = 
+    (*printf "%d: %d v. %a@." t.id p (pp_print_list Format.pp_print_int ",") gs;*)
+    if List.mem p gs then accum 
+    else accum @ [(Compat (t.id,p))] in
+  List.fold_left f accum ps
+
+(*let to_cvt m_tbl assums goal =
+  let ids t = List.sort Int.compare (t.id::t.children) in
+  let c = List.map (fun i -> M i) ids in
+  let a = List.map (fun i -> M (- i)) t.assume in
+  let g = List.map (fun i -> M (- i)) t.guarantee in
+  Impl (l,r)
+*)
+
+(* *)
 
 let tcs = [
   [(1, N 1, 2); (0, C (2, [N 1]), 2)];
@@ -106,12 +141,30 @@ let () =
 
   let tc = List.nth tcs 5 in
 
-  let p_tbl = Hashtbl.create 7 in
+  let m_tbl = Hashtbl.create 7 in
   let t_tbl = Hashtbl.create 7 in
-  loop (parse p_tbl) t_tbl tc;
+  loop (parse m_tbl) t_tbl tc;
   let ts = Hashtbl.fold (fun _ t ts -> t::ts) t_tbl [] in
   let ts = List.sort (fun t1 t2 -> Int.compare t1.id t2.id) ts in
   let ts = List.map (flatten t_tbl) ts in
-  printf "%a@." (pp_print_list pp_print_t ",@ ") ts
+  printf "%a@.@." (pp_print_list pp_print_t ",@ ") ts;
+
+  let vmax = Hashtbl.fold (fun _ j vmax -> if j > vmax then j else vmax) m_tbl 0 in
+  let vmax = vmax - 1 in
+  let rec pow10 e = if e = 0 then 10 else 10*pow10 (e-1) in
+  let p_base = pow10 (vmax / 10) in
+  let rec expand i j = if j < 0 then [] else (expand i (j-1)) @ [flatten_pid p_base (i,j)] in
+  let ns, ps = Hashtbl.fold (fun i j ms -> ((i,j-1)::ms)) m_tbl []
+    |> List.sort (fun m1 m2 -> Int.compare (fst m1) (fst m2))
+    |> List.fold_left (fun accum (i,j) -> accum @ (expand i j)) []
+    |> List.partition (fun m -> m >= 0) in
+  let compats = enum_compat_pairs [] ns in
+  let compats = enum_compat_pairs compats ps in
+  let compats = List.fold_left (enum_compat_n_p_pairs p_base ps) compats ts in
+  let ns = List.map (fun i -> M i) ns in
+  let ps = List.map (fun i -> M i) ps in
+  let cs = ns @ ps @ compats in
+  (*printf "%a@." (pp_print_list pp_print_constr ",@,") cs*)
+  printf "%a@." pp_print_script cs
 
   ;;

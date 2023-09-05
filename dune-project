@@ -1,6 +1,6 @@
 (lang dune 3.7)
 
-(name lustre_comp)
+(name kind2_cr)
 
 (generate_opam_files true)
 
@@ -18,7 +18,7 @@
 ;(data_only_dirs kind2_build)
 
 (package
- (name lustre_comp)
+ (name kind2_cr)
  (synopsis "A Kind 2 wrapper")
  (description "A wrapper of Kind 2 that replaces the compositional MC function.")
  (depends ocaml dune) )

@@ -4,7 +4,14 @@
   (dev
     (flags (:standard -warn-error -all))))
 
+(library
+ (public_name kind2_cr)
+ (libraries kind2 swipl.swipl)
+ (modules (:standard \ kind2_cr))
+ (wrapped false)
+)
+
 (executable
- (public_name lustre_comp)
- (name main)
- (libraries lustre_comp kind2 swipl.swipl))
+ (public_name kind2_cr)
+ (libraries kind2_cr)
+ (modules kind2_cr) )
