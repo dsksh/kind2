@@ -30,6 +30,18 @@ let instantiate_node_name name id =
 let id_of_node_instance name =
   List.hd (snd name)
 
+let hd_of_scope sv = 
+  match SV.scope_of_state_var sv with
+  | s::_ -> s
+  | [] -> ""
+
+let pp_print_scope_hd ppf (sv,id) =
+  match SV.scope_of_state_var sv with
+  | s::_ -> 
+    Format.fprintf ppf "%s_%a__" s
+      (pp_print_list Format.pp_print_int ",") id 
+  | [] -> ()
+
 let instantiate_svar (nn,id) map sv =
   match SVT.find_opt map sv with
   | Some svi -> svi
@@ -44,14 +56,22 @@ let instantiate_svar_trie nn map t =
 
 let register_arg map (nn, ni) svar0 svar =
   (* Map CN.usr.v to PN___ni__v. *)  
-  let n, ty = SV.name_of_state_var svar, SV.type_of_state_var svar in
+  (*let n, ty = SV.name_of_state_var svar, SV.type_of_state_var svar in
   let sv = SV.mk_state_var n (SV.scope_of_state_var nn) ty in
-  SVT.add map svar0 (sv,ni)
+  SVT.add map svar0 (sv,ni)*)
+  SVT.add map svar0 (svar,ni);
+  (* TODO: redundant entry for nested calls. *)
+  let svar0_embedded = 
+    SV.mk_state_var (SV.name_of_state_var svar0) [] (SV.type_of_state_var svar0) in
+  SVT.add map svar0_embedded (svar,ni)
 
 let mk_sv_from_svi ?(is_const:bool = false) (sv,id) =
-  let ss = Format.asprintf "%a" ( pp_print_list 
+  (*Format.printf "msfs %a %a@." SV.pp_print_state_var sv (pp_print_list Format.pp_print_int ",") id;*)
+  (*let ss = Format.asprintf "%a" ( pp_print_list 
     (fun ppf (s,i) -> Format.fprintf ppf "%s___%d__" s i) "" )
-    (List.combine (SV.scope_of_state_var sv) id) in
+    (List.combine (SV.scope_of_state_var sv) id) in*)
+  let ss = Format.asprintf "%a" pp_print_scope_hd (sv,id)
+  in
   SV.mk_state_var ~is_const:is_const 
     (ss^(SV.name_of_state_var sv)) [] (SV.type_of_state_var sv)
 
@@ -62,25 +82,33 @@ let mk_subst_sv map sv =
 
 let mk_subst_var ?(inherited = None) nno map var =
   let mk_svar sv =
+    let () = Format.printf "%a: " StateVar.pp_print_state_var sv in
     match SVT.find_opt map sv with
-    | Some (sv,id) -> ( match inherited with
-      | Some sc -> 
-        (* Case of getting a property inherited from a child instance (who manages the map) to 
-           a parent instance (inherited). Omit printing the scope. *)
-        if SV.scope_of_state_var sv = sc then
-          let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in
-          sv, []
-        else (sv,id)
-      | None -> (sv,id) )
-    | None -> ( match nno with
-      | Some (nn,id) -> 
-        ( (* Create a local name e.g. Self___id.v. *)  
-          let sv = SV.mk_state_var (SV.name_of_state_var sv) (SV.scope_of_state_var nn)
-          (SV.type_of_state_var sv) in
-          sv, id )
-      | None -> 
-          let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in
-          sv, [] )
+    | Some (sv,id) -> ( 
+        Format.printf "%a is found@." StateVar.pp_print_state_var sv;
+        match inherited with
+        | Some sc -> 
+          (* Case of getting a property inherited from a child instance (who manages the map) to 
+             a parent instance (inherited). Omit printing the scope. *)
+          (*if SV.scope_of_state_var sv = sc then*)
+          if List.length sc > 0 && List.hd sc = hd_of_scope sv then
+            let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in
+            sv, []
+          else (sv,id)
+        | None -> (sv,id) 
+      )
+    | None -> ( 
+        Format.printf "not found@.";
+        match nno with
+        | Some (nn,id) -> 
+          ( (* Create a local name e.g. Self___id.v. *)  
+            let sv = SV.mk_state_var (SV.name_of_state_var sv) (SV.scope_of_state_var nn)
+            (SV.type_of_state_var sv) in
+            sv, id )
+        | None -> 
+            let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in
+            sv, [] 
+      )
   in
   if Var.is_const_state_var var then
     let sv = Var.state_var_of_state_var_instance var in
@@ -153,7 +181,7 @@ let add_ghost_vs node =
 
 (* *)
 
-(* Make some local variables observable (input or output). *)
+(* Make some local variables observable (as input or output variables). *)
 let mk_observable node =
   let f _ v (is,os,ls) = let n = SV.name_of_state_var v in
     (*Format.printf "%a@." (pp_print_list (D.pp_print_one_index false) ",") ind;*)
@@ -180,9 +208,11 @@ let rec instantiate_node nodes id map node =
   n, cs @ cs_all, id
 
 and instantiate_child nodes p_name map c (cs0, cs_all0, id) =
+  (* A binding map. *)
   let map = SVT.copy map in
   (* Obtain the child node entry. *)
   let callee = LustreNode.node_of_name c.call_node_name nodes in
+  (* Prepare the binding map. *)
   let _ = List.combine (D.bindings callee.inputs) (D.bindings c.call_inputs) |> 
     List.map (fun ((_,sv0), (_,sv1)) -> register_arg map p_name sv0 sv1) in
   let _ = List.combine (D.bindings callee.outputs) (D.bindings c.call_outputs) |> 
@@ -237,7 +267,9 @@ let collect_props_from_contract ni (ps,cs,goals) =
 let translate_subsystems in_sys =
   let ns = InputSystem.retrieve_lustre_nodes in_sys in
   (*let ns = List.map add_ghost_vs ns in*)
+  KEvent.log L_info "Instantiating nodes";
   let nis, _ = instantiate_main_nodes ns in
+  KEvent.log L_info "Collecting property nodes";
   let ps, cs, gs = List.fold_right collect_props_from_contract nis ([],[],[]) in
   (nis, ps, cs, gs)
 
@@ -246,14 +278,20 @@ let translate_subsystems in_sys =
 let pp_print_svar_instance nno ppf (sv,id) =
   let b = match nno with
   | Some (nn,id0) ->
-    if SV.scope_of_state_var sv <> SV.scope_of_state_var nn || id <> id0 then
-      true
-    else false
+    if hd_of_scope sv <> hd_of_scope nn || id <> id0 then true else false
   | None -> true in
   if b then (
-    let pr ppf (s,id) = Format.fprintf ppf "%s___%d" s id in
+    (*let pr ppf (s,id) = Format.fprintf ppf "%s___%d" s id in
     Format.fprintf ppf "%a__"
-      (pp_print_list pr "__") (List.combine (SV.scope_of_state_var sv) id) );
+      (pp_print_list pr "__") (List.combine (SV.scope_of_state_var sv) id)*)
+    (*match SV.scope_of_state_var sv with
+    | s::sl -> 
+      Format.fprintf ppf "%s_%a__" s 
+      (pp_print_list Format.pp_print_int ",") id
+      (*(pp_print_list Format.pp_print_string "_") sl*)
+    | [] -> ()*)
+    Format.fprintf ppf "%a" pp_print_scope_hd (sv,id)
+    );
   Format.fprintf ppf "%s" (SV.name_of_state_var sv)
 
 let pp_print_svi_typed nno ppf sv =

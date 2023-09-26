@@ -88,13 +88,13 @@ try
   KEvent.log L_info "Printing leaf node instances";
   let leaves_ppf = create_ppf Leaves in
   Format.fprintf leaves_ppf "%a" NodeInstanceToLustre.pp_print_nodes ns;
-  KEvent.log L_debug "%a" NodeInstanceToLustre.pp_print_nodes ns;
+  (*KEvent.log L_debug "%a" NodeInstanceToLustre.pp_print_nodes ns;*)
 
   KEvent.log L_info "Printing a CHR proof script";
   let cs = CompValidator.translate ns ps cs gs in
   let proof_ppf = create_ppf Proof in
   Format.fprintf proof_ppf "%a" CompValidator.pp_print_script cs;
-  KEvent.log L_debug "%a" CompValidator.pp_print_script cs;
+  (*KEvent.log L_debug "%a" CompValidator.pp_print_script cs;*)
 
   (*if CompValidator.validate cs then
     Format.printf "valid@."

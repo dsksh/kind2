@@ -303,15 +303,16 @@ node Plant (c : int; u_P : real) returns (v_N, v_I : real);
   assume 0.0 <= u_P and u_P <= 100.0;
   assume true -> pre (u_P + v_N / alpha_T * 0.1) <= 105.0;
   assume true -> pre (u_P + v_N / alpha_T * 0.1) >= 95.0;
+
   guarantee 0.0 <= v_N and v_N < 4.6;
-  guarantee v_I < 0.95;
   guarantee v_N / alpha_T * 0.1 <= 105.0;
+  guarantee true -> ( c >= 10 => pre v_N > 0.6 );
+  guarantee true -> ( c >= 20 => pre v_N > 0.9 );
+
+  guarantee v_I < 0.95;
 
   --guarantee v_I > 0.47 => v_N < 4.0;
   --guarantee v_I > 0.3 => v_N < 3.0;
-
-  guarantee true -> ( c >= 10 => pre v_N > 0.6 );
-  guarantee true -> ( c >= 20 => pre v_N > 0.9 );
 
  *)
 var v_A, omega, i_M : real;

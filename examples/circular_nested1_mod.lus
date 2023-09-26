@@ -1,0 +1,38 @@
+
+node N1 (in1, in2: bool) returns (out: bool)
+let
+  out = in1 and in2;
+tel
+
+node N2 (in: bool) returns (out: bool)
+let
+  out = true -> pre in;
+tel
+
+node Nest (in1, in2: bool) returns (out: bool)
+(*@contract
+  assume in1;
+  assume in2;
+  guarantee out;
+*)
+var fb: bool;
+let
+  out = N1(in1 and in2, fb);
+  fb = N2(out);
+tel
+
+node Toplevel (in: bool) returns (out: bool)
+(*@contract
+  assume in;
+  guarantee out;
+*)
+var fb: bool;
+let
+  out = Nest(in, fb);
+  fb  = N2(out);
+
+  --%MAIN;
+  --%PROPERTY out;
+tel
+
+-- eof
