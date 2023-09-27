@@ -4,7 +4,7 @@ module SV = StateVar
 module SVS = StateVar.StateVarSet
 module SVT = StateVar.StateVarHashtbl
 
-type svar_instance = SV.t * int list
+type svar_instance = SV.t * int
 
 type node_instance = {
   name : svar_instance;
@@ -15,32 +15,32 @@ type node_instance = {
 
 type prop = { id : int; vars : svar_instance list; expr : LustreExpr.t; }
 
-val instantiate_node_name : LustreIdent.t -> 'a -> SV.t * 'a list
-val id_of_node_instance : 'a * 'b list -> 'b
+val instantiate_node_name : LustreIdent.t -> int -> svar_instance
+val id_of_node_instance : svar_instance -> int
 val instantiate_svar : SV.t * 'a -> (SV.t * 'a) SVT.t -> SVT.key -> SV.t * 'a
 val instantiate_svar_trie :
   SV.t * 'a -> (SV.t * 'a) SVT.t -> SVT.key D.t -> (SV.t * 'a) list
 val register_arg : (SV.t * 'a) SVT.t -> SV.t * 'a -> SVT.key -> SV.t -> unit
-val mk_sv_from_svi : ?is_const:bool -> SV.t * int list -> SV.t
-val mk_subst_sv : (SV.t * int list) SVT.t -> SVT.key -> SV.t
+val mk_sv_from_svi : ?is_const:bool -> SV.t * int -> SV.t
+val mk_subst_sv : (SV.t * int) SVT.t -> SVT.key -> SV.t
 val mk_subst_var :
   ?inherited:string list option ->
-  (SV.t * int list) option -> (SV.t * int list) SVT.t -> Var.t -> Var.t
-val mk_observable : LustreNode.t -> LustreNode.t
+  (SV.t * int) option -> (SV.t * int) SVT.t -> Var.t -> Var.t
+(*val mk_observable : LustreNode.t -> LustreNode.t
 val instantiate_node :
   LustreNode.t list ->
   int -> svar_instance SVT.t -> LustreNode.t -> 
   node_instance * node_instance list * int
 val instantiate_child :
   LustreNode.t list ->
-  SV.t * int list ->
+  SV.t * int ->
   svar_instance SVT.t ->
   LustreNode.node_call -> 
   node_instance list * node_instance list * int ->
   node_instance list * node_instance list * int
 val instantiate_main_nodes : LustreNode.t list -> node_instance list * int
 val collect_props :
-  SV.t * int list ->
+  SV.t * int ->
   svar_instance SVT.t ->
   LustreExpr.t SVT.t ->
   LustreContract.svar -> 
@@ -50,17 +50,18 @@ val collect_props_from_contract :
   node_instance -> 
   prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list ->
   prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list
+*)
 val translate_subsystems :
   'a InputSystem.t ->
   node_instance list * prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list
 
 val pp_print_svar_instance :
-  (SV.t * int list) option -> Format.formatter -> SV.t * int list -> unit
+  (SV.t * int) option -> Format.formatter -> SV.t * int -> unit
 val pp_print_svi_typed :
-  (SV.t * int list) option -> Format.formatter -> SV.t * int list -> unit
+  (SV.t * int) option -> Format.formatter -> SV.t * int -> unit
 val pp_print_map :
-  (SV.t * int list) option ->
-  Format.formatter -> (SV.t * int list) SVT.t -> unit
+  (SV.t * int) option ->
+  Format.formatter -> (SV.t * int) SVT.t -> unit
 val pp_print_node : Format.formatter -> node_instance -> unit
 val pp_print_nodes : Format.formatter -> node_instance list -> unit
 val pp_print_prop : Format.formatter -> prop -> unit

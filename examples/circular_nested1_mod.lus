@@ -9,26 +9,24 @@ let
   out = true -> pre in;
 tel
 
-node Nest (in1, in2: bool) returns (out: bool)
+node Nest (in_n: bool) returns (out: bool)
 (*@contract
-  assume in1;
-  assume in2;
+  assume in_n;
   guarantee out;
 *)
 var fb: bool;
 let
-  out = N1(in1 and in2, fb);
+  out = N1(in_n, fb);
   fb = N2(out);
 tel
 
-node Toplevel (in: bool) returns (out: bool)
+node Toplevel (_: bool) returns (out: bool)
 (*@contract
-  assume in;
   guarantee out;
 *)
 var fb: bool;
 let
-  out = Nest(in, fb);
+  out = Nest(fb);
   fb  = N2(out);
 
   --%MAIN;
