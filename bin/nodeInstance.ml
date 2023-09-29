@@ -56,20 +56,32 @@ let register_arg map (nn,id) svar0 svar =
   (* Map CN.usr.v to PN_id__v. *)  
   SVT.add map svar0 (instantiate_svar (nn,id) map svar)
 
+(* If id <> 0, append the scope to the name. *)
 let mk_sv_from_svi ?(is_const:bool = false) (sv,id) =
   (*Format.printf "msfs %a %d@." SV.pp_print_state_var sv id;*)
-  let ss = Format.asprintf "%a" pp_print_scope_hd (sv,id) in
+  (*let ss = Format.asprintf "%a" pp_print_scope_hd (sv,id) in*)
+  let ss = if id > 0 then Format.asprintf "%a" pp_print_scope_hd (sv,id) else "" in
   SV.mk_state_var ~is_const:is_const 
-    (ss^(SV.name_of_state_var sv)) [] (SV.type_of_state_var sv)
+    (ss^(SV.name_of_state_var sv)) (SV.scope_of_state_var sv) (SV.type_of_state_var sv)
 
 let mk_subst_sv map sv =
   match SVT.find_opt map sv with
   | Some svi -> mk_sv_from_svi svi
   | None -> sv
 
+(*let mk_subst_e e_map var =
+  let sv = Var.state_var_of_state_var_instance var in
+  let e : LustreExpr.t = match SVT.find_opt e_map sv with
+  | Some e -> e
+  | None -> LustreExpr.mk_free_var var in
+  Var.mk_var e
+  *)
+
 let mk_subst_var ?(inherited = None) nno map var =
   let mk_svar sv =
     KEvent.log L_debug "%a: " StateVar.pp_print_state_var sv;
+    (*let ic = SV.is_const sv in*)
+    let ic = false in
     match SVT.find_opt map sv with
     | Some (sv,id) -> ( 
         KEvent.log L_debug "%a is found@." StateVar.pp_print_state_var sv;
@@ -79,27 +91,29 @@ let mk_subst_var ?(inherited = None) nno map var =
              a parent instance (inherited). Omit printing the scope. *)
           (*if SV.scope_of_state_var sv = sc then*)
           if List.length sc > 0 && List.hd sc = hd_of_scope sv then
-            let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in
+            (*let sv = SV.mk_state_var ~is_const:ic (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in*)
+            let sv = SV.mk_state_var ~is_const:ic (SV.name_of_state_var sv) sc (SV.type_of_state_var sv) in
             sv, 0
-          else (sv,id)
-        | None -> (sv,id) 
+          else sv, id
+        | None -> sv, id
       )
     | None -> ( 
         KEvent.log L_debug "not found@.";
         match nno with
-        | Some (nn,id) -> 
-          ( (* Create a local name e.g. Self___id.v. *)  
-            let sv = SV.mk_state_var (SV.name_of_state_var sv) (SV.scope_of_state_var nn)
-            (SV.type_of_state_var sv) in
-            sv, id )
-        | None -> 
-            let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in
-            sv, 0
+        | Some (nn,id) -> (
+          (* Create a local name e.g. Self___id.v. *)  
+          (*let sv = SV.mk_state_var ~is_const:ic (SV.name_of_state_var sv) (SV.scope_of_state_var nn) (SV.type_of_state_var sv) in*)
+          sv, id )
+        | None -> (
+          (*let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in*)
+          sv, 0 )
       )
   in
   if Var.is_const_state_var var then
     let sv = Var.state_var_of_state_var_instance var in
+    (*Format.printf "sv: %a@." SV.pp_print_state_var_debug sv;*)
     let svi = mk_svar sv in
+    (*Format.printf "svi: %a@." SV.pp_print_state_var_debug (mk_sv_from_svi ~is_const:true svi);*)
     Var.mk_const_state_var (mk_sv_from_svi ~is_const:true svi)
   else if Var.is_state_var_instance var then
     let sv = Var.state_var_of_state_var_instance var in
@@ -176,21 +190,22 @@ let mk_observable cs node =
   let is, os, ls = List.fold_right ff node.locals (node.inputs, node.outputs, []) in
   { node with inputs = is; outputs = os; locals = ls; }
 
+(* Returns an instance with a list of ancesters, and the latest id. *)
 let rec instantiate_node nodes id map node =
   let nm = instantiate_node_name node.LustreNode.name id in
   KEvent.log L_debug "Instantiating node %a@." (LustreIdent.pp_print_ident true) node.name;
   let cs, cs_all, id = List.fold_right (instantiate_child nodes nm map) node.calls ([],[],id) in
   let c_ns = List.map (fun c -> c.name) cs in
-  (*let node = if cs = [] then node else mk_observable node in*)
-  let node = mk_observable cs node in
+  let node = if id > 0 then mk_observable cs node else node in
   let n = { name = nm; map = map; children = c_ns; src = node } in
   n, cs @ cs_all, id
 
+(* Returns a list of direct children, a list of ancesters, and the latest id. *)
 and instantiate_child nodes p_name map c (cs0, cs_all0, id) =
   (* Obtain the child node entry. *)
   let callee = LustreNode.node_of_name c.call_node_name nodes in
-  match callee.contract with
-  | Some _ -> 
+  match id, callee.contract with
+  | id, Some _ when id > 0 -> 
     (* A binding map. *)
     let map = SVT.copy map in
     (* Prepare the binding map. *)
@@ -199,41 +214,74 @@ and instantiate_child nodes p_name map c (cs0, cs_all0, id) =
     let _ = List.combine (D.bindings callee.outputs) (D.bindings c.call_outputs) |> 
       List.map (fun ((_,sv0), (_,sv1)) -> register_arg map p_name sv0 sv1) in
     let ci, cs, id = instantiate_node nodes (id+1) map callee in
-    Format.printf "Instantiated %d %d %d@." id (List.length cs) (List.length cs_all0);
     cs0 @ [ci], cs @ cs_all0, id
 
-  | None -> (* If the child is not annotated... *)
-    let nm = instantiate_node_name callee.LustreNode.name 0 in
-    (*let cs = ( match List.find_opt (fun ci -> 
-      Format.printf "%s v. %s@." (SV.name_of_state_var (fst ci.name)) (SV.name_of_state_var (fst nm));
-      ci.name = nm) cs_all0 with
-      | None ->
-        let ci = { name = nm; map = map; children = []; src = callee } in
-        Format.printf "Instantiated 0 0 %d@." (List.length cs_all0);
-        cs0 @ [ci]
-      | Some _ -> cs0
-    ) in
-    (cs, cs_all0, id)*)
-    let ci = { name = nm; map = map; children = []; src = callee } in
-    cs0 @ [ci], cs_all0, id
+  | _, _ -> (* If the parent or this child is not annotated... *)
+    (*let nm = instantiate_node_name callee.LustreNode.name 0 in
+    let ci = { name = nm; map = map; children = []; src = callee } in*)
+    let ci, cs, _ = instantiate_node nodes 0 map callee in
+    cs0 @ [ci], cs @ cs_all0, id
 
 let instantiate_main_nodes nodes =
   let map = SVT.create 7 in
   let f n (ns,id) = 
-    if n.is_main then 
+    if n.is_main then (
+      ( if n.contract = None then
+          let m = Format.asprintf "A main node w/ no contract: %a" 
+            (LustreIdent.pp_print_ident false) n.name in 
+          failwith m );
       let n, cs, id = instantiate_node nodes (id+1) map n in 
-      n::cs, id
+      n::cs, id )
     else ns, id in
   List.fold_right f nodes ([],0)
 
-let collect_props nn v_map e_map p (ps,pids) =
-  let e0 = match SVT.find_opt e_map p.svar with
+let get_prop_rhs nn v_map e_map p =
+  (* Obtain the rhs expression. *)
+  let expr = match SVT.find_opt e_map p.svar with
   | Some e -> e
   | None -> failwith (Format.asprintf "no expr for %a" LustreContract.pp_print_svar p)
   in
-  let svs = LustreExpr.state_vars_of_expr e0 in
+
+  (*if Var.is_const_state_var var then
+    let sv = Var.state_var_of_state_var_instance var in
+    (*Format.printf "sv: %a@." SV.pp_print_state_var_debug sv;*)
+    let svi = mk_svar sv in
+    (*Format.printf "svi: %a@." SV.pp_print_state_var_debug (mk_sv_from_svi ~is_const:true svi);*)
+    Var.mk_const_state_var (mk_sv_from_svi ~is_const:true svi)
+  else if Var.is_state_var_instance var then
+    *)
+
+  (* Expand further the rhs if variables are registered in e_map. *)
+  let expr = Var.VarSet.fold ( fun v expr ->
+    let sv = Var.state_var_of_state_var_instance v in
+    match SVT.find_opt e_map sv with
+    | Some e -> 
+      (*Format.printf "subst %a w/ %a@." SV.pp_print_state_var sv (LustreExpr.pp_print_lustre_expr false) e;*)
+      let e = if Var.is_state_var_instance v then
+          (* Inherit the offset. *)
+          let o = Var.offset_of_state_var_instance v in
+          LustreExpr.unsafe_expr_of_term (Term.bump_state o 
+            (LustreExpr.unsafe_term_of_expr e.LustreExpr.expr_init)) 
+        else e.LustreExpr.expr_init in 
+      LustreExpr.apply_subst [v, e] expr
+    | None -> expr )
+    (LustreExpr.vars_of_expr expr) expr in
+
+  (*Format.printf "res: %a@." (LustreExpr.pp_print_lustre_expr false) expr;*)
+
+  (* Collect and instantiate variables. *)
+  let svs = LustreExpr.state_vars_of_expr expr in
   let svis = SVS.fold (fun sv l -> (instantiate_svar nn v_map sv)::l) svs [] in
-  let expr = LustreExpr.map_vars (mk_subst_var (Some nn) v_map) e0 in
+
+  (* Subst variables according to the node instantiation. *)
+  (*let expr = LustreExpr.map_vars (mk_subst_var (Some nn) v_map) expr in*)
+  let sco = Some (StateVar.scope_of_state_var (fst nn)) in
+  let expr = LustreExpr.map_vars (mk_subst_var ~inherited:sco None v_map) expr in
+
+  expr, svis
+
+let collect_props get_rhs p (ps,pids) =
+  let expr, svis = get_rhs p in
   match List.find_opt (fun p -> LustreExpr.equal p.expr expr) ps with
   | Some p -> ps, List.sort (fun i j -> -(Int.compare i j)) (p.id::pids)
   | None -> 
@@ -244,7 +292,7 @@ let collect_props_from_contract ni (ps,cs,goals) =
   match ni.src.contract with
   | None -> ps, cs, goals
   | Some c -> 
-    let f = collect_props ni.name ni.map ni.src.state_var_expr_map in
+    let f = collect_props (get_prop_rhs ni.name ni.map ni.src.state_var_expr_map) in
     let ps,pids_a = List.fold_right f c.assumes (ps,[]) in
     let gs = fst (List.split c.guarantees) in
     let ps,pids_g = List.fold_right f gs (ps,[]) in 

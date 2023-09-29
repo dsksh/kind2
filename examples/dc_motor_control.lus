@@ -64,18 +64,18 @@ let
   d_P = (255.0/(u_max-u_min)) * (u + u_min);
 tel
 
-node PG (const t, pf: int; const a, b: real) returns (o: real)
-(* contract
-  assume 2 <= t;
-  assume 0 <= pf and pf <= 2*t;
-  assume 0.01 < a;
-*)
-var s, l: int;
-let
-  s = 0 -> (pre s) + 1;
-  l = 0 -> if s+pf-(pre l) >= 2*t then (pre l) + 2*t else (pre l);
-  o = if s+pf-l >= t then b else a+b;
-tel
+--node PG (const t, pf: int; const a, b: real) returns (o: real)
+--(* contract
+--  assume 2 <= t;
+--  assume 0 <= pf and pf <= 2*t;
+--  assume 0.01 < a;
+--*)
+--var s, l: int;
+--let
+--  s = 0 -> (pre s) + 1;
+--  l = 0 -> if s+pf-(pre l) >= 2*t then (pre l) + 2*t else (pre l);
+--  o = if s+pf-l >= t then b else a+b;
+--tel
 
 node PID (N_ : real) returns (u : real);
 var u_, e, i, d : real;

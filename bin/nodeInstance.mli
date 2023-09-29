@@ -17,6 +17,7 @@ type prop = { id : int; vars : svar_instance list; expr : LustreExpr.t; }
 
 val instantiate_node_name : LustreIdent.t -> int -> svar_instance
 val id_of_node_instance : svar_instance -> int
+val hd_of_scope : SV.t -> string
 val instantiate_svar : SV.t * 'a -> (SV.t * 'a) SVT.t -> SVT.key -> SV.t * 'a
 val instantiate_svar_trie :
   SV.t * 'a -> (SV.t * 'a) SVT.t -> SVT.key D.t -> (SV.t * 'a) list
@@ -51,6 +52,10 @@ val collect_props_from_contract :
   prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list ->
   prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list
 *)
+
+val get_prop_rhs : SV.t * int -> svar_instance SVT.t -> LustreExpr.t SVT.t -> 
+  LustreContract.svar -> LustreExpr.t * (SV.t*int) list
+
 val translate_subsystems :
   'a InputSystem.t ->
   node_instance list * prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list
