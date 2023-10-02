@@ -242,32 +242,28 @@ let get_prop_rhs nn v_map e_map p =
   | None -> failwith (Format.asprintf "no expr for %a" LustreContract.pp_print_svar p)
   in
 
-  (*if Var.is_const_state_var var then
-    let sv = Var.state_var_of_state_var_instance var in
-    (*Format.printf "sv: %a@." SV.pp_print_state_var_debug sv;*)
-    let svi = mk_svar sv in
-    (*Format.printf "svi: %a@." SV.pp_print_state_var_debug (mk_sv_from_svi ~is_const:true svi);*)
-    Var.mk_const_state_var (mk_sv_from_svi ~is_const:true svi)
-  else if Var.is_state_var_instance var then
-    *)
-
   (* Expand further the rhs if variables are registered in e_map. *)
-  let expr = Var.VarSet.fold ( fun v expr ->
+  let rec subst_e expr = Var.VarSet.fold ( fun v expr ->
     let sv = Var.state_var_of_state_var_instance v in
     match SVT.find_opt e_map sv with
     | Some e -> 
-      (*Format.printf "subst %a w/ %a@." SV.pp_print_state_var sv (LustreExpr.pp_print_lustre_expr false) e;*)
-      let e = if Var.is_state_var_instance v then
-          (* Inherit the offset. *)
+      let e = subst_e e in
+      Format.printf "subst %a w/ %a@." SV.pp_print_state_var sv (LustreExpr.pp_print_lustre_expr false) e;
+      let e = if Var.is_state_var_instance v then (
+          ( if not (LustreExpr.equal_expr e.LustreExpr.expr_init e.LustreExpr.expr_step) then
+            failwith "non-equal expr_init and expr_step" );
           let o = Var.offset_of_state_var_instance v in
+          (* Inherit the offset. *)
           LustreExpr.unsafe_expr_of_term (Term.bump_state o 
-            (LustreExpr.unsafe_term_of_expr e.LustreExpr.expr_init)) 
-        else e.LustreExpr.expr_init in 
+            (LustreExpr.unsafe_term_of_expr e.LustreExpr.expr_init))
+        ) else e.LustreExpr.expr_init in 
       LustreExpr.apply_subst [v, e] expr
     | None -> expr )
     (LustreExpr.vars_of_expr expr) expr in
 
-  (*Format.printf "res: %a@." (LustreExpr.pp_print_lustre_expr false) expr;*)
+  let expr = subst_e expr in
+
+  Format.printf "res: %a@." (LustreExpr.pp_print_lustre_expr false) expr;
 
   (* Collect and instantiate variables. *)
   let svs = LustreExpr.state_vars_of_expr expr in

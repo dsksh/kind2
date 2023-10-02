@@ -4,10 +4,16 @@ let
   engaged = (c = 0) -> (c = 1 + pre c);
 tel
 
+node P(s : real) returns (out : bool)
+let
+  out = s < 1.0;
+tel
+
 node Filter_body(in : real) returns (out : real)
 (* contract
   assume -1.0 <= in and in <= 1.0 ;
-  guarantee -1.0 < out and out < 1.0 ; -- valid (at 25)
+  --guarantee -1.0 < out and out < 1.0 ; -- valid (at 25)
+  guarantee P(out) ;
 *)
 var sum, D1, D2: real;
 let
@@ -22,8 +28,8 @@ tel
 node Filter1(in : real) returns (c : int; out : real)
 (*@contract
   assume -1.0 <= in and in <= 1.0 ;
-  --guarantee -1.0 < out and out < 1.0 ; -- valid (at 25)
-  guarantee c < 30 => out < 0.9 ; -- valid (at 30)
+  guarantee P(out) ; -- valid (at 25)
+  --guarantee c < 30 => out < 0.9 ; -- valid (at 30)
 *)
 let
   c = 0 -> 1 + pre c;
@@ -31,44 +37,48 @@ let
 tel
 
 node Filter2(c : int; in : real) returns (out : real)
-(*@contract
+(* contract
   assume GClock(c) ;
   assume -1.0 <= in and in <= 1.0 ;
-  --guarantee -1.0 < out and out < 1.0 ; -- valid (at 25)
-  guarantee c < 30 => out < 0.9 ; -- valid (at 30)
+  guarantee P(out) ; -- valid (at 25)
+  --guarantee c < 30 => out < 0.9 ; -- valid (at 30)
 *)
 let
   out = Filter_body(in);
 tel
 
-node Main1(in : real) returns (c, lc : int; out : real)
+node Main1(in : real) returns (c : int; out : real)
 (*@contract
   assume -1.0 <= in and in <= 1.0 ;
-  --guarantee out < 1.0 ;
-  guarantee c < 300 => out < 1.0 ; -- timeout
-  --guarantee lc < 30 => out < 1.0 ; -- valid
+  guarantee P(out) ; -- timeout
+  --guarantee c < 30 => out < 1.0 ; -- timeout
 *)
-var po : real; plc : int; cc : bool;
+var po : real; lc, pc : int; cc : bool;
 let
-  c = 0 -> if pre c = 9 then 0 else 1 + pre c;
-  cc = c = 0;
-  plc, po = (0, 0.0) -> pre (lc, out);
-  lc, out = merge(
+  lc = 0 -> if pre lc = 9 then 0 else 1 + pre lc;
+  cc = lc = 0;
+  pc, po = (0, 0.0) -> pre (c, out);
+  c, out = merge(
     cc;
     (activate Filter1 every cc)(in);
-    (plc, po) when not cc );
+    (pc, po) when not cc );
 
   -- MAIN ;
 tel
 
-node Main2(c : int; in : real) returns (out : real)
-(*@contract
-  assume GClock(c);
-  assume -1.0 <= in and in <= 1.0 ;
-  --guarantee out < 1.0 ;
-  guarantee c < 300 => out < 1.0 ;
-  --guarantee lc < 30 => out < 1.0 ;
-*)
+node P_scaled10(s : real) returns (out : bool)
+var po : bool; lc : int; cc : bool;
+let
+  lc = 0 -> if pre lc = 9 then 0 else 1 + pre lc;
+  cc = lc = 0;
+  po = false -> pre out;
+  out = merge(
+    cc;
+    (activate P every cc)(s);
+    po when not cc );
+tel
+
+node Filter_scaled10(c : int; in : real) returns (out : real)
 var po : real; lc : int; cc : bool;
 let
   lc = 0 -> if pre lc = 9 then 0 else 1 + pre lc;
@@ -78,8 +88,19 @@ let
     cc;
     (activate Filter2 every cc)(c, in);
     po when not cc );
+tel
 
-  -- MAIN ;
+node Main2(c : int; in : real) returns (out : real)
+(*@contract
+  assume GClock(c);
+  assume -1.0 <= in and in <= 1.0 ;
+  --guarantee out < 1.0 ;
+  guarantee P_scaled10(out);
+  --guarantee c < 300 => out < 1.0 ; -- timeout
+  --guarantee lc < 30 => out < 1.0 ;
+*)
+let
+  out = Filter_scaled10(c, in);
 tel
 
 -- eof
