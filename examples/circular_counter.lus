@@ -1,0 +1,139 @@
+
+const thres = 2;
+
+node C0 (const b: int; c: int; in1: bool; in2: int) returns (out1: bool; out2: int)
+(*@contract
+  assume b > 0;
+  assume c = 0 -> c = 1 + pre c;
+  assume in1;
+  assume true -> true -> pre (c mod b = 0 => (in2 >= thres and in2 > pre in2));
+  assume true -> true -> pre (c mod b <> 0 => (not (in2 >= thres and in2 > pre in2)));
+  guarantee c <= 2*b => out2 < thres;
+*)
+let
+  out1 = in1;
+  out2 = 0 -> pre ( if in2 >= thres and (false -> in2 > pre in2) then 
+                    ( if out2 >= thres then 0 else 1 + out2 ) 
+                    else out2 );
+
+  -- MAIN;
+tel
+
+node C1 (c: int; in1: bool; in2: int) returns (out1: bool; out2: int)
+(*@contract
+  assume in1;
+
+  assume c = 0 -> c = 1 + pre c;
+  assume in2 = thres -> (in2 = -1 * pre in2);
+  guarantee c < 3 => out2 < thres;
+  guarantee c mod 6 = 3 => out2 = thres and out2 > pre out2;
+  guarantee c mod 6 <> 3 => not (out2 = thres and out2 > pre out2);
+*)
+let
+  out1 = in1;
+  out2 = 0 -> pre ( if in2 >= thres and (true -> in2 > pre in2) then 
+                    ( if out2 >= thres then 0 else 1 + out2 ) 
+                    else out2 );
+
+  -- MAIN;
+tel
+
+node C2 (c: int; in1: bool; in2: int) returns (out1: bool; out2: int)
+(*@contract
+  assume in1;
+
+  assume c = 0 -> c = 1 + pre c;
+  assume true -> pre (c mod 6 = 3 => (in2 >= thres and in2 > pre in2));
+  assume true -> pre (c mod 6 <> 3 => (not (in2 >= thres and in2 > pre in2)));
+  guarantee c < 10 => out2 < thres;
+  guarantee c mod 18 = 10 => out2 >= thres and out2 > pre out2;
+  guarantee c mod 18 <> 10 => not (out2 >= thres and out2 > pre out2);
+*)
+let
+  out1 = in1;
+  out2 = 0 -> pre ( if in2 >= thres and (false -> in2 > pre in2) then 
+                    ( if out2 >= thres then 0 else 1 + out2 ) 
+                    else out2 );
+
+  -- MAIN;
+tel
+
+node C3 (c: int; in1: bool; in2: int) returns (out1: bool; out2: int)
+(*@contract
+  assume in1;
+
+  assume c = 0 -> c = 1 + pre c;
+  assume true -> true -> pre (c mod 18 = 10 => (in2 >= thres and in2 > pre in2));
+  assume true -> true -> pre (c mod 18 <> 10 => (not (in2 >= thres and in2 > pre in2)));
+  --guarantee c < 29 => out2 < thres;
+  guarantee c mod 54 = 29 => out2 >= thres and out2 > pre out2; -- at 55 after 240s
+  guarantee c mod 54 <> 29 => not (out2 >= thres and out2 > pre out2);
+*)
+let
+  out1 = in1;
+  out2 = 0 -> pre ( if in2 >= thres and (false -> in2 > pre in2) then 
+                    ( if out2 >= thres then 0 else 1 + out2 ) 
+                    else out2 );
+
+  -- MAIN;
+tel
+
+node C (c: int; in1: bool; in2: int) returns (out1: bool; out2: int)
+(*@contract
+  assume c = 0 -> c = 1 + pre c;
+  assume in1;
+  --assume true -> true -> pre (c mod 54 = 29 => (in2 >= thres and in2 > pre in2));
+  --assume true -> true -> pre (c mod 54 <> 29 => (not (in2 >= thres and in2 > pre in2)));
+  --guarantee (86 <= c and c < 246) => (out2 < thres or out2 <= pre out2);
+  --guarantee c mod 162 = 84 => out2 >= thres and out2 > pre out2;
+  --guarantee c mod 162 <> 84 => not (out2 >= thres and out2 > pre out2);
+*)
+let
+  out1 = in1;
+  out2 = 0 -> pre ( if in2 >= thres and (false -> in2 > pre in2) then 
+                    ( if out2 >= thres then 0 else 1 + out2 ) 
+                    else out2 );
+
+  -- MAIN;
+tel
+
+node Toplevel (c, in: int) returns (bo: bool; io: int)
+(*@contract
+  assume c = 0 -> c = 1 + pre c;
+  assume in = thres -> (in = -1 * pre in);
+  --guarantee io < 1;
+  --guarantee io < thres;
+  guarantee c < 10 => io < thres; -- 1: 
+  --guarantee c < 29 => io < thres; -- 2: 
+  --guarantee c < 84 => io < thres; -- 3:
+  --guarantee c < 247 => io < thres; -- 4: 
+  --guarantee c < 734 => io < thres; -- 5: 1430s
+  --guarantee 0 <= io and io <= thres;
+*)
+var b1: bool; i1: int;
+--var b2: bool; i2: int;
+--var b3: bool; i3: int;
+--var b4: bool; i4: int;
+--var b5: bool; i5: int;
+--var b6: bool; i6: int;
+--var b7: bool; i7: int;
+--var b8: bool; i8: int;
+--var b9: bool; i9: int;
+--var b10: bool; i10: int;
+let
+  b1, i1 = C(c, bo, in);
+  --b2, i2 = C(c, b1, i1);
+  --b3, i3 = C(c, b2, i2);
+  --b4, i4 = C(c, b3, i3);
+  --b5, i5 = C(c, b4, i4);
+  --b6, i6 = C(c, b5, i5);
+  --b7, i7 = C(c, b6, i6);
+  --b8, i8 = C(c, b7, i7);
+  --b9, i9 = C(c, b8, i8);
+  --b10, i10 = C(c, b9, i9);
+  bo, io = C(c, true -> pre b1, i1);
+
+  -- MAIN;
+tel
+
+-- eof

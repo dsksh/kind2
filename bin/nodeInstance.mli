@@ -1,4 +1,5 @@
 module I = LustreIdent
+module IT = LustreIdent.Hashtbl
 module D = LustreIndex
 module SV = StateVar
 module SVS = StateVar.StateVarSet
@@ -11,6 +12,7 @@ type node_instance = {
   map : svar_instance SVT.t;
   children : svar_instance list;
   src : LustreNode.t;
+  is_first : bool;
 }
 
 type prop = { id : int; vars : svar_instance list; expr : LustreExpr.t; }
@@ -27,31 +29,6 @@ val mk_subst_sv : (SV.t * int) SVT.t -> SVT.key -> SV.t
 val mk_subst_var :
   ?inherited:string list option ->
   (SV.t * int) option -> (SV.t * int) SVT.t -> Var.t -> Var.t
-(*val mk_observable : LustreNode.t -> LustreNode.t
-val instantiate_node :
-  LustreNode.t list ->
-  int -> svar_instance SVT.t -> LustreNode.t -> 
-  node_instance * node_instance list * int
-val instantiate_child :
-  LustreNode.t list ->
-  SV.t * int ->
-  svar_instance SVT.t ->
-  LustreNode.node_call -> 
-  node_instance list * node_instance list * int ->
-  node_instance list * node_instance list * int
-val instantiate_main_nodes : LustreNode.t list -> node_instance list * int
-val collect_props :
-  SV.t * int ->
-  svar_instance SVT.t ->
-  LustreExpr.t SVT.t ->
-  LustreContract.svar -> 
-  prop list * int list -> 
-  prop list * int list
-val collect_props_from_contract :
-  node_instance -> 
-  prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list ->
-  prop list * (int * int list * int list * int list * int list) list * (int * int list * int list) list
-*)
 
 val get_prop_rhs : SV.t * int -> svar_instance SVT.t -> LustreExpr.t SVT.t -> 
   LustreContract.svar -> LustreExpr.t * (SV.t*int) list

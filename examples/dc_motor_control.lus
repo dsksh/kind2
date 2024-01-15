@@ -188,6 +188,7 @@ node Toplevel (c : int) returns (v_N, v_I, u_P : real);
   guarantee true -> ( c >= 10 => pre v_N > 0.6 );
   --guarantee true -> ( c >= 20 => pre v_N > 0.9 );
   guarantee true -> ( c >= 20 => pre v_N > 0.8 );
+  -- 3.1s
  *)
 let
   u_P = Controller(c, v_N, v_I);

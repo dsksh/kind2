@@ -3,6 +3,7 @@ open LustreNode
 open LustreContract
 
 module I = LustreIdent 
+module IT = LustreIdent.Hashtbl
 module D = LustreIndex
 module SV = StateVar
 module SVS = StateVar.StateVarSet
@@ -15,6 +16,7 @@ type node_instance = {
   map : svar_instance SVT.t;
   children : svar_instance list;
   src : LustreNode.t;
+  is_first : bool;
 }
 
 type prop = {
@@ -89,9 +91,7 @@ let mk_subst_var ?(inherited = None) nno map var =
         | Some sc -> 
           (* Case of getting a property inherited from a child instance (who manages the map) to 
              a parent instance (inherited). Omit printing the scope. *)
-          (*if SV.scope_of_state_var sv = sc then*)
           if List.length sc > 0 && List.hd sc = hd_of_scope sv then
-            (*let sv = SV.mk_state_var ~is_const:ic (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in*)
             let sv = SV.mk_state_var ~is_const:ic (SV.name_of_state_var sv) sc (SV.type_of_state_var sv) in
             sv, 0
           else sv, id
@@ -102,10 +102,8 @@ let mk_subst_var ?(inherited = None) nno map var =
         match nno with
         | Some (nn,id) -> (
           (* Create a local name e.g. Self___id.v. *)  
-          (*let sv = SV.mk_state_var ~is_const:ic (SV.name_of_state_var sv) (SV.scope_of_state_var nn) (SV.type_of_state_var sv) in*)
           sv, id )
         | None -> (
-          (*let sv = SV.mk_state_var (SV.name_of_state_var sv) [] (SV.type_of_state_var sv) in*)
           sv, 0 )
       )
   in
@@ -191,17 +189,21 @@ let mk_observable cs node =
   { node with inputs = is; outputs = os; locals = ls; }
 
 (* Returns an instance with a list of ancesters, and the latest id. *)
-let rec instantiate_node nodes id map node =
+let rec instantiate_node nimap nodes id map node =
+  (* Check if this is the first instance of the node. *)
+  let is_first = not (IT.mem nimap node.LustreNode.name) in
+  if is_first then IT.add nimap node.LustreNode.name id;
+
   let nm = instantiate_node_name node.LustreNode.name id in
   KEvent.log L_debug "Instantiating node %a@." (LustreIdent.pp_print_ident true) node.name;
-  let cs, cs_all, id = List.fold_right (instantiate_child nodes nm map) node.calls ([],[],id) in
+  let cs, cs_all, id = List.fold_right (instantiate_child nimap nodes nm map) node.calls ([],[],id) in
   let c_ns = List.map (fun c -> c.name) cs in
   let node = if id > 0 then mk_observable cs node else node in
-  let n = { name = nm; map = map; children = c_ns; src = node } in
+  let n = { name = nm; map = map; children = c_ns; src = node; is_first = is_first } in
   n, cs @ cs_all, id
 
 (* Returns a list of direct children, a list of ancesters, and the latest id. *)
-and instantiate_child nodes p_name map c (cs0, cs_all0, id) =
+and instantiate_child nimap nodes p_name map c (cs0, cs_all0, id) =
   (* Obtain the child node entry. *)
   let callee = LustreNode.node_of_name c.call_node_name nodes in
   match id, callee.contract with
@@ -213,16 +215,14 @@ and instantiate_child nodes p_name map c (cs0, cs_all0, id) =
       List.map (fun ((_,sv0), (_,sv1)) -> register_arg map p_name sv0 sv1) in
     let _ = List.combine (D.bindings callee.outputs) (D.bindings c.call_outputs) |> 
       List.map (fun ((_,sv0), (_,sv1)) -> register_arg map p_name sv0 sv1) in
-    let ci, cs, id = instantiate_node nodes (id+1) map callee in
+    let ci, cs, id = instantiate_node nimap nodes (id+1) map callee in
     cs0 @ [ci], cs @ cs_all0, id
 
   | _, _ -> (* If the parent or this child is not annotated... *)
-    (*let nm = instantiate_node_name callee.LustreNode.name 0 in
-    let ci = { name = nm; map = map; children = []; src = callee } in*)
-    let ci, cs, _ = instantiate_node nodes 0 map callee in
+    let ci, cs, _ = instantiate_node nimap nodes 0 map callee in
     cs0 @ [ci], cs @ cs_all0, id
 
-let instantiate_main_nodes nodes =
+let instantiate_main_nodes nimap nodes =
   let map = SVT.create 7 in
   let f n (ns,id) = 
     if n.is_main then (
@@ -230,7 +230,7 @@ let instantiate_main_nodes nodes =
           let m = Format.asprintf "A main node w/ no contract: %a" 
             (LustreIdent.pp_print_ident false) n.name in 
           failwith m );
-      let n, cs, id = instantiate_node nodes (id+1) map n in 
+      let n, cs, id = instantiate_node nimap nodes (id+1) map n in 
       n::cs, id )
     else ns, id in
   List.fold_right f nodes ([],0)
@@ -309,7 +309,7 @@ let translate_subsystems in_sys =
   let ns = InputSystem.retrieve_lustre_nodes in_sys in
   (*let ns = List.map add_ghost_vs ns in*)
   KEvent.log L_info "Instantiating nodes";
-  let nis, _ = instantiate_main_nodes ns in
+  let nis, _ = instantiate_main_nodes (IT.create (List.length ns)) ns in
   KEvent.log L_info "Collecting property nodes";
   let ps, cs, gs = List.fold_right collect_props_from_contract nis ([],[],[]) in
   (nis, ps, cs, gs)

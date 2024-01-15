@@ -1,0 +1,29 @@
+
+node C (in1: bool; in2: int) returns (out1: bool; out2: int)
+(*@contract
+  assume in1 and in2 >= 0;
+  guarantee out1 and out2 >= 0;
+*)
+let
+  out1 = in1;
+  out2 = in2 + (0 -> pre out2);
+tel
+
+node Toplevel (in: int) returns (out: int)
+(*@contract
+  assume in >= 0;
+  guarantee out >= 0;
+*)
+var s1, s3: bool; s2: int;
+let
+  s1, s2 = C(s3, in);
+  s3, out = C(true -> pre s1, s2);
+
+  -- This version can be verified compositionally.
+  --s1, s2 = C(true -> pre s3, in);
+  --s3, out = C(s1, s2);
+
+  --%MAIN;
+tel
+
+-- eof
