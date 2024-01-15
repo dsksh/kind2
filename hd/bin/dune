@@ -1,0 +1,17 @@
+;(copy_files# /opt/kind2-build/_build/default/src/kind2dev.*)
+
+(env
+  (dev
+    (flags (:standard -warn-error -all))))
+
+(library
+ (public_name kind2_cr)
+ (libraries kind2 swipl.swipl)
+ (modules (:standard \ kind2_cr))
+ (wrapped false)
+)
+
+(executable
+ (public_name kind2_cr)
+ (libraries kind2_cr)
+ (modules kind2_cr) )

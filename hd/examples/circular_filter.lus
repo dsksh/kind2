@@ -1,0 +1,35 @@
+
+node Filter (bin : bool; in : real) returns (bout : bool; out : real)
+(*@contract
+  assume bin;
+  assume -1.0 <= in and in <= 1.0;
+  guarantee bout;
+  guarantee -1.0 <= out and out <= 1.0 ; -- valid (k=6)
+*)
+var sum, D1, D2: real;
+let
+  bout = bin;
+  sum = 0.0582*(if bin then in else -in) - (-1.49*D1) - 0.881*D2;
+  D1 = 0.0 -> pre sum;
+  D2 = 0.0 -> pre D1;
+  out = (sum - D2) / 1.25;
+
+  -- MAIN;
+tel
+
+node Toplevel (in : real) returns (s1, s2 : real)
+(*@contract
+  assume -1.0 <= in and in <= 1.0;
+  guarantee -1.0 <= s1 and s1 <= 1.0;
+*)
+var b1, b2, pre_b2 : bool;
+let
+  b1, s1 = Filter(pre_b2, s2);
+  b2, s2 = Filter(b1, in);
+  pre_b2 = true -> pre b2;
+  --s2 = Id(s1);
+
+  --%MAIN;
+tel
+
+-- eof

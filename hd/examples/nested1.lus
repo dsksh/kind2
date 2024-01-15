@@ -1,0 +1,32 @@
+
+const b = true;
+
+node N1 (c : bool) returns (out : bool);
+let
+  out = b and c;
+tel
+
+node N2 (c : bool) returns (out : bool);
+(*@contract
+  assume c ;
+  guarantee out ;
+ *)
+let
+  out = b and N1(c);
+tel
+
+node N3 (c : bool) returns (out : bool);
+let
+  out = b and N2(c);
+tel
+
+node Test (const c : bool) returns (out : bool);
+(*@contract
+  assume c ;
+  guarantee out ;
+ *)
+let
+  out = N2(c) and N3(c);
+tel
+
+-- eof

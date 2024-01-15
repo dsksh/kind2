@@ -1,0 +1,54 @@
+BootStrap: docker
+From: ocaml/opam:debian-11-ocaml-4.14-flambda
+Stage: devel
+
+%post
+    #sed -i 's@deb.debian.org/debian @ftp.jaist.ac.jp/debian @g' /etc/apt/sources.list
+    sed -i 's@deb.debian.org/debian @ftp.jp.debian.org/debian @g' /etc/apt/sources.list
+    echo 'Acquire::Retries "100";\nAcquire::https::Timeout "240";\nAcquire::http::Timeout "240";\nDebug::Acquire::https "true";' > /etc/apt/apt.conf.d/99custom
+    apt-get update && apt-get install -y --no-install-recommends \
+    make m4 g++ musl-dev git \
+    libzmq3-dev libsodium-dev \
+    curl pkg-config
+    rm -rf /var/lib/apt/lists/* 
+    #
+    mkdir -p /opt/kind2-build
+    cd /opt/kind2-build
+    curl -sSL https://github.com/kind2-mc/kind2/archive/refs/tags/v1.6.0.tar.gz | tar xz
+    mv kind2-1.6.0/* .
+    #
+    export OPAMROOT=/opt/opam
+    opam init -y --auto-setup
+    eval $(opam env)
+    opam update
+    opam install -y . --deps-only
+    opam env >> /opt/opam_env.sh
+    #make static
+    make build
+    strip bin/kind2
+
+#BootStrap: docker
+#From: debian:bullseye-slim
+#Stage: final
+#
+#%post
+#    sed -i 's@deb.debian.org/debian @ftp.jaist.ac.jp/debian @g' /etc/apt/sources.list
+#    echo 'Acquire::Retries "100";\nAcquire::https::Timeout "240";\nAcquire::http::Timeout "240";\nDebug::Acquire::https "true";' > /etc/apt/apt.conf.d/99custom
+#    apt-get update && apt-get install -y --no-install-recommends \
+#    bash \
+#    curl openssl ca-certificates openssh-client \
+#    git \
+#    musl libzmq5 libsodium23 \
+#    z3
+#    rm -rf /var/lib/apt/lists/* 
+#    #
+#    curl -sSL https://yices.csl.sri.com/releases/2.6.2/yices-2.6.2-x86_64-pc-linux-gnu-static-gmp.tar.gz | tar xz
+#    cp ./yices-2.6.2/bin/yices-smt2 /usr/local/bin/
+#    rm -rf yices-*
+#    #
+#    curl -sSL https://github.com/cvc5/cvc5/releases/latest/download/cvc5-Linux -o cvc5
+#    mv cvc5 /usr/local/bin/
+#    chmod a+x /usr/local/bin/cvc5
+#
+#%files from devel
+#    /opt/kind2-build/bin/kind2 /usr/local/bin/kind2

@@ -1,0 +1,8 @@
+
+(env
+  (dev
+    (flags (:standard -warn-error -all))))
+
+(executable
+ (public_name kind2_cr_benchgen)
+ (libraries kind2_cr))

@@ -1,0 +1,2 @@
+(library
+ (name lustre_comp))

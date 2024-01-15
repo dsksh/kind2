@@ -1,0 +1,107 @@
+node Filter(in1: bool; in2: real) returns (out1: bool; out2: real);
+(*@contract
+  assume in1;
+  assume -1.0 <= in2 and in2 <= 1.0 ;
+  guarantee out1;
+  guarantee -1.0 < out2 and out2 < 1.0 ; -- valid (at 25)
+*)
+var sum, D1, D2: real;
+let
+  out1 = in1;
+
+  sum = 0.0582*in2 - (-1.49*D1) - 0.881*D2;
+  D1 = 0.0 -> pre sum;
+  D2 = 0.0 -> pre D1;
+  out2 = (sum - D2) / 1.25;
+
+  -- MAIN ;
+tel
+
+node Toplevel (in : real) returns (out : real);
+(*@contract
+  assume -1.0 <= in and in <= 1.0 ;
+  guarantee -1.0 <= out and out <= 1.0 ;
+  -- 2 (out < 1.0): at 25 after 623s / 2+5Gs, 14.9s (wall), 33.7s (user)
+  -- 2: at 25 after 204s / 2+5Gs, 14.9s (wall), 33.7s (user)
+  -- 3: at >32 after >600s / 2+7Gs, 14.9s (wall), 34.2s (user)
+  -- 12: >600s / 2+25Gs, 14.9s (wall), 34.7s (user)
+  -- 36: >600s / 2+73Gs, 15.4s (wall), 33.7s (user)
+*)
+var fb: bool;
+var b1: bool; r1: real; -- 2
+var b2: bool; r2: real; -- 3
+--var b3: bool; r3: real;
+--var b4: bool; r4: real;
+--var b5: bool; r5: real;
+--var b6: bool; r6: real;
+--var b7: bool; r7: real;
+--var b8: bool; r8: real;
+--var b9: bool; r9: real;
+--var b10: bool; r10: real;
+--var b11: bool; r11: real; -- 12
+--var b12: bool; r12: real;
+--var b13: bool; r13: real;
+--var b14: bool; r14: real;
+--var b15: bool; r15: real;
+--var b16: bool; r16: real;
+--var b17: bool; r17: real;
+--var b18: bool; r18: real;
+--var b19: bool; r19: real;
+--var b20: bool; r20: real;
+--var b21: bool; r21: real;
+--var b22: bool; r22: real;
+--var b23: bool; r23: real; -- 24
+--var b24: bool; r24: real;
+--var b25: bool; r25: real;
+--var b26: bool; r26: real;
+--var b27: bool; r27: real;
+--var b28: bool; r28: real;
+--var b29: bool; r29: real;
+--var b30: bool; r30: real;
+--var b31: bool; r31: real;
+--var b32: bool; r32: real;
+--var b33: bool; r33: real;
+--var b34: bool; r34: real;
+--var b35: bool; r35: real; -- 36
+let
+  b1, r1 = Filter(fb, in);
+  b2, r2 = Filter(b1, r1);
+  --b3, r3 = Filter(b2, r2);
+  --b4, r4 = Filter(b3, r3);
+  --b5, r5 = Filter(b4, r4);
+  --b6, r6 = Filter(b5, r5);
+  --b7, r7 = Filter(b6, r6);
+  --b8, r8 = Filter(b7, r7);
+  --b9, r9 = Filter(b8, r8);
+  --b10, r10 = Filter(b9, r9);
+  --b11, r11 = Filter(b10, r10);
+  --b12, r12 = Filter(b11, r11);
+  --b13, r13 = Filter(b12, r12);
+  --b14, r14 = Filter(b13, r13);
+  --b15, r15 = Filter(b14, r14);
+  --b16, r16 = Filter(b15, r15);
+  --b17, r17 = Filter(b16, r16);
+  --b18, r18 = Filter(b17, r17);
+  --b19, r19 = Filter(b18, r18);
+  --b20, r20 = Filter(b19, r19);
+  --b21, r21 = Filter(b20, r20);
+  --b22, r22 = Filter(b21, r21);
+  --b23, r23 = Filter(b22, r22);
+  --b24, r24 = Filter(b23, r23);
+  --b25, r25 = Filter(b24, r24);
+  --b26, r26 = Filter(b25, r25);
+  --b27, r27 = Filter(b26, r26);
+  --b28, r28 = Filter(b27, r27);
+  --b29, r29 = Filter(b28, r28);
+  --b30, r30 = Filter(b29, r29);
+  --b31, r31 = Filter(b30, r30);
+  --b32, r32 = Filter(b31, r31);
+  --b33, r33 = Filter(b32, r32);
+  --b34, r34 = Filter(b33, r33);
+  --b35, r35 = Filter(b34, r34);
+  fb, out = Filter(true -> pre b2, r2);
+
+  --%MAIN ;
+tel
+
+-- eof
