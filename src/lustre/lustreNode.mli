@@ -199,7 +199,7 @@ type t = {
   asserts : (position * StateVar.t) list;
   (** Assertions of node *)
 
-  props : (StateVar.t * string * Property.prop_source) list;
+  props : (StateVar.t * string * Property.prop_source * Property.prop_kind) list;
   (** Proof obligations for the node *)
 
   contract : contract option ;
@@ -239,6 +239,8 @@ type state_var_def =
   | CallOutput of position * LustreIndex.index
   | ProperEq of position * LustreIndex.index
   | GeneratedEq of position * LustreIndex.index
+  | FrameBlock of position
+  | IfBlock of position
   | ContractItem of position * LustreContract.svar * contract_item_type
   | Assertion of position
 
@@ -333,11 +335,14 @@ val equation_of_svar : t -> StateVar.t -> equation option
     there is an output without an equational definition *)
 val partially_defined : t -> bool
 
-(** Returns the equation for a state variable if any. *)
+(** Returns the source of a state variable if any. *)
 val source_of_svar : t -> StateVar.t -> state_var_source option
 
 (** Returns the node call the svar is (one of) the output(s) of, if any. *)
 val node_call_of_svar : t -> StateVar.t -> node_call option
+
+(** Returns a set of state variables that are output of some node call *)
+val node_call_svars : t -> StateVar.StateVarSet.t
 
 (** Return the scope of the node *)
 val scope_of_node : t -> Scope.t
@@ -390,6 +395,9 @@ val fold_node_calls_with_trans_sys :
 (** Pretty-print a source of a state variable *)
 val pp_print_state_var_source : Format.formatter -> state_var_source -> unit 
 
+(** Pretty-print a definition of a state variable *)
+val pp_print_state_var_def : Format.formatter -> state_var_def -> unit
+
 (** Set source of state variable *)
 val set_state_var_source : t -> StateVar.t -> state_var_source -> t
 
@@ -425,11 +433,17 @@ val get_state_var_instances : StateVar.t -> state_var_instance list
 (** print state var instances for debug *)
 val pp_print_state_var_instances_debug : Format.formatter -> t -> unit
 
-(** Get the definitions (with positions in the Lustre program) of a state variable *)
-val get_state_var_defs : StateVar.t -> state_var_def list
+(** Get the definitions (with positions in the Lustre program) of a state variable. 
+    In the return type, the first list contains state var defs where the state variable 
+    is explicitly mentioned. The second list contains state var defs that are dependencies 
+    (the node item does not explicitly reference the state variable, but the state variable 
+    depends on it) *)
+val get_state_var_defs : StateVar.t -> state_var_def list * state_var_def list
 
-(** Add a definition (with positions in the Lustre program) for a state variable *)
-val add_state_var_def : StateVar.t -> state_var_def -> unit
+(** Add a definition (with positions in the Lustre program) for a state variable.
+    is_dep should be true iff the state_var_def is a dependency (where the state variable
+    is not explicitly referenced by the definition, but somehow depends on it) *)
+val add_state_var_def : ?is_dep:bool -> StateVar.t -> state_var_def -> unit
 
 val pos_of_state_var_def : state_var_def -> position
 

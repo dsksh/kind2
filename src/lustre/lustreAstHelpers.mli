@@ -48,11 +48,27 @@ val type_arity : lustre_type -> int * int
 val type_contains_subrange : lustre_type -> bool
 (** Returns true if the lustre type expression contains an IntRange or if it is an IntRange *)
 
-val substitute : HString.t -> expr -> expr -> expr
-(** Subsitute the supplied identifier and expression into the last expression *)
+val type_contains_enum_or_subrange : lustre_type -> bool
+(** Returns true if the lustre type expression contains an EnumType/IntRange or if it is an EnumType/IntRange *)
+
+val type_contains_array : lustre_type -> bool 
+(** Returns true if the lustre type expression contains an array or if it is an array *)
+
+val substitute_naive : HString.t -> expr -> expr -> expr
+(** Substitute second param for first param in third param. 
+    AnyOp and Quantifier are not supported due to introduction of bound variables. *)
+
+val apply_subst_in_type : (HString.t * expr) list -> lustre_type -> lustre_type
+(** [apply_subst_in_type s t] applies the substitution defined by association list [s]
+    to the expressions of (possibly dependent) type [t]
+    AnyOp and Quantifier are not supported due to introduction of bound variables. *)
+    
 
 val has_unguarded_pre : expr -> bool
 (** Returns true if the expression has unguareded pre's *)
+
+val has_unguarded_pre_no_warn : expr -> bool
+(** Returns true if the expression has unguareded pre's. Does not print warning. *)
 
 val has_pre_or_arrow : expr -> Lib.position option
 (** Returns true if the expression has a `pre` or a `->`. *)
@@ -68,30 +84,25 @@ val node_local_decl_has_pre_or_arrow : node_local_decl -> Lib.position option
 val node_item_has_pre_or_arrow : node_item -> Lib.position option
 (** Checks whether a node equation has a `pre` or a `->`. *)
 
-val replace_lasts : LustreAst.index list -> string -> SI.t -> expr -> expr * SI.t
-(** [replace_lasts allowed prefix acc e] replaces [last x] expressions in AST
-    [e] by abstract identifiers prefixed with [prefix]. Only identifiers that
-    appear in the list [allowed] are allowed to appear under a last. It returns
-    the new AST expression and a set of identifers for which the last
-    application was replaced. *)
-
 val vars_of_node_calls: expr -> SI.t
-(** returns all identifiers from the [expr] ast that are inside node calls *)
+(** [vars_of_node_calls e] returns all variable identifiers within arguments of node calls that
+    appear in the expression [e] (while excluding node call identifiers) *)
 
-val vars: expr -> SI.t
-(** returns all the [ident] that appear in the expr ast*)
+val vars_without_node_call_ids: expr -> SI.t
+(** [vars_without_node_call_ids e] returns all variable identifiers that appear in the expression [e]
+    while excluding node call identifiers *)
 
 val vars_of_struct_item_with_pos: struct_item -> (Lib.position * index) list
-(** returns all variables that appear in a [struct_item] with associated positions *)
+(** returns all variables that appear in a [struct_item] (the lhs of an equation) with associated positions *)
 
 val vars_of_struct_item: struct_item -> SI.t
-(** returns all variables that appear in a [struct_item] *)
+(** returns all variables that appear in a [struct_item] (the lhs of an equation) *)
 
-val vars_lhs_of_eqn_with_pos: node_item -> (Lib.position * index) list
+val defined_vars_with_pos: node_item -> (Lib.position * index) list
 (** returns all the variables that appear in the lhs of the equation of the node body with associated positions *)
 
 val vars_of_ty_ids: typed_ident -> SI.t
-(**  returns all the variables that occur in the expression of a typed identifier declaration *)
+(** returns a singleton set with the only identifier in a typed identifier declaration *)
 
 val add_exp: Lib.position -> expr -> expr -> expr
 (** Return an AST that adds two expressions*)
@@ -109,10 +120,16 @@ val is_const_arg: const_clocked_typed_decl -> bool
 (** Returns [true] if the node input stream is a constant  *)
 
 val is_type_num: lustre_type -> bool
-(** returns [true] if the type is a number type i.e. Int, Real, IntRange. *)
-  
+(** returns [true] if the type is a number type i.e. Int, Real, IntRange, or Machine Integer *)
+
 val is_type_int: lustre_type -> bool
-(** returns [true] if the type is an integer type i.e. Int, Machine Integers or an IntRange *)
+(** returns [true] if the type is an integer type, i.e. Int, or IntRange *)
+
+val is_type_real_or_int: lustre_type -> bool
+(** returns [true] if the type is a real or integer type, i.e, Real, Int, or IntRange *)
+
+val is_type_int_or_machine_int: lustre_type -> bool
+(** returns [true] if the type is an integer type or machine int, i.e. Int, IntRange, or Machine Integer *)
 
 val is_type_unsigned_machine_int: lustre_type -> bool
 (** returns [true] if the type is an unsigned machine int. i.e. UInt, UInt32 etc.  *)
@@ -122,6 +139,9 @@ val is_type_signed_machine_int: lustre_type -> bool
 
 val is_type_machine_int: lustre_type -> bool
 (** returns [true] if the type is a signed or unsiged machine integer.  *)
+
+val is_type_array: lustre_type -> bool
+(** returns [true] if the type is an array type *)
 
 val is_machine_type_of_associated_width: (lustre_type * lustre_type) -> bool
 (** returns [true] if the first component of the type is of the same width 
@@ -140,8 +160,9 @@ val split_program: declaration list -> (declaration list * declaration list)
 val abstract_pre_subexpressions: expr -> expr
 (** Abstracts out the pre expressions into a constant so that the built graph does not create a cycle.*)
 
-val extract_equation: node_item list -> node_equation list
-(** Extracts equation from the node item *)
+val replace_idents: index list -> index list -> expr -> expr
+(** For every identifier, if that identifier is position n in locals1,
+   replace it with position n in locals2 *)
   
 val extract_node_equation: node_item -> (eq_lhs * expr) list
 (** Extracts out all the node equations as an associated list of rhs and lhs of the equation *)
@@ -176,3 +197,6 @@ val hash : int option -> expr -> int
 
 val rename_contract_vars : expr -> expr
 (** Rename contract variables from internal names (with format #_contract_var) to syntax names *)
+
+val name_of_prop : Lib.position -> HString.t option -> LustreAst.prop_kind -> HString.t
+(** Get the name associated with a property *)

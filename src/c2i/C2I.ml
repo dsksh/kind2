@@ -155,19 +155,19 @@ let mk_solvers sys =
   (* Destroy all existing solvers. *)
   let solver1 =
     SMTSolver.create_instance
-      ~produce_assignments:true
+      ~produce_models:true
       (TransSys.get_logic sys) (Flags.Smt.solver ())
   in
 
   let solver2 =
     SMTSolver.create_instance
-      ~produce_assignments:true
+      ~produce_models:true
       (TransSys.get_logic sys) (Flags.Smt.solver ())
   in
 
   let solver3 =
     SMTSolver.create_instance
-      ~produce_assignments:true
+      ~produce_models:true
       (TransSys.get_logic sys) (Flags.Smt.solver ())
   in
 
@@ -195,13 +195,19 @@ let mk_solvers sys =
     (SMTSolver.declare_sort solver3)
     Numeral.zero Numeral.one ;
 
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver1) ;
+
   (* Asserting init in [solver1]. *)
   TransSys.init_of_bound (Some (SMTSolver.declare_fun solver1)) sys Numeral.zero
   |> SMTSolver.assert_term solver1 ;
 
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver2) ;
+
   (* Asserting trans in [solver2]. *)
   TransSys.trans_of_bound (Some (SMTSolver.declare_fun solver2)) sys Numeral.one
   |> SMTSolver.assert_term solver2 ;
+
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver3) ;
 
   (* Asserting trans in [solver3]. *)
   TransSys.trans_of_bound (Some (SMTSolver.declare_fun solver3)) sys Numeral.one

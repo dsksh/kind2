@@ -244,27 +244,23 @@ let rec minimize_node_call_args ue lst expr =
     -> expr
     | A.Call (pos, ident, args) ->
       A.Call (pos, ident, List.mapi (minimize_arg ident) args)
-    | A.CallParam (pos, ident, ts, args) ->
-      A.CallParam (pos, ident, ts, List.mapi (minimize_arg ident) args)
     | A.RecordProject (p,e,i) -> A.RecordProject (p,aux e,i)
     | A.TupleProject (p,e1,e2) -> A.TupleProject (p,aux e1, e2)
     | A.StructUpdate (p,e1,ls,e2) -> A.StructUpdate (p,aux e1,ls,aux e2)
     | A.ConvOp (p,op,e) -> A.ConvOp (p,op,aux e)
     | A.GroupExpr (p,ge,es) -> A.GroupExpr (p,ge,List.map aux es)
     | A.ArrayConstr (p,e1,e2) -> A.ArrayConstr (p,aux e1,aux e2)
-    | A.ArraySlice (p,e1,(e2,e3)) -> A.ArraySlice (p,aux e1,(aux e2,aux e3))
     | A.ArrayIndex (p,e1, e2) -> A.ArrayIndex (p,aux e1,aux e2)
-    | A.ArrayConcat (p,e1,e2) -> A.ArrayConcat (p,aux e1,aux e2)
     | A.RecordExpr (p,id,lst) ->
       A.RecordExpr (p,id,List.map (fun (i,e) -> (i, aux e)) lst)
     | A.UnaryOp (p,op,e) -> A.UnaryOp (p,op,aux e)
     | A.BinaryOp (p,op,e1,e2) -> A.BinaryOp (p,op,aux e1,aux e2)
     | A.Quantifier (p,q,ids,e) -> A.Quantifier (p,q,ids,aux e)
-    | A.NArityOp (p,op,es) -> A.NArityOp (p,op,List.map aux es)
+    | A.AnyOp (p,ti,e, None) -> A.AnyOp (p,ti,aux e, None)
+    | A.AnyOp (p,ti,e1,Some e2) -> A.AnyOp (p,ti,aux e1,Some (aux e2))
     | A.TernaryOp (p,op,e1,e2,e3) -> A.TernaryOp (p,op,aux e1,aux e2,aux e3)
     | A.CompOp (p,op,e1,e2) -> A.CompOp (p,op,aux e1,aux e2)
     | A.When (p,e,c) -> A.When (p,aux e,c)
-    | A.Current (p,e) -> A.Current (p,aux e)
     | A.Condact (p,e1,e2,id,es1,es2) ->
       A.Condact (p,aux e1,aux e2,id,List.map aux es1,List.map aux es2)
     | A.Activate (p,id,e1,e2,es) ->
@@ -273,7 +269,6 @@ let rec minimize_node_call_args ue lst expr =
       A.Merge (p,id,List.map (fun (i,e) -> (i, aux e)) lst)
     | A.RestartEvery (p,id,es,e) -> A.RestartEvery (p,id,List.map aux es,aux e)
     | A.Pre (p,e) -> A.Pre (p,aux e)
-    | A.Fby (p,e1,i,e2) -> A.Fby (p,aux e1,i,aux e2)
     | A.Arrow (p,e1,e2) -> A.Arrow (p,aux e1,aux e2)
   in aux expr
 
@@ -283,21 +278,22 @@ and ast_contains p ast =
     else match ast with
     | A.Const _ | A.Ident _ | A.ModeRef _
       -> false
-    | A.Call (_, _, args) | A.CallParam (_, _, _, args) ->
+    | A.Call (_, _, args) ->
       List.map aux args
       |> List.exists (fun x -> x)
     | A.ConvOp (_,_,e) | A.UnaryOp (_,_,e) | A.RecordProject (_,e,_)
       | A.TupleProject (_,e,_) | A.Quantifier (_,_,_,e)
-      | A.When (_,e,_) | A.Current (_,e) | A.Pre (_,e) ->
+      | A.When (_,e,_) | A.Pre (_,e) | A.AnyOp (_,_,e,None) ->
       aux e
+    | A.AnyOp (_,_,e1,Some e2) -> aux e1 || aux e2
     | A.StructUpdate (_,e1,_,e2) | A.ArrayConstr (_,e1,e2)
-      | A.ArrayConcat (_,e1,e2) | A.ArrayIndex (_,e1,e2) 
-      | A.BinaryOp (_,_,e1,e2) | A.CompOp (_,_,e1,e2) | A.Fby (_,e1,_,e2)
-      | A.Arrow (_,e1,e2) -> aux e1 || aux e2
-    | A.GroupExpr (_,_,es) | A.NArityOp (_,_,es) ->
+    | A.ArrayIndex (_,e1,e2) 
+    | A.BinaryOp (_,_,e1,e2) | A.CompOp (_,_,e1,e2)
+    | A.Arrow (_,e1,e2) -> aux e1 || aux e2
+    | A.GroupExpr (_,_,es) ->
       List.map aux es
       |> List.exists (fun x -> x)
-    | A.ArraySlice (_,e1,(e2,e3)) | A.TernaryOp (_,_,e1,e2,e3) ->
+    | A.TernaryOp (_,_,e1,e2,e3) ->
       aux e1 || aux e2 || aux e3
     | A.RecordExpr (_,_,lst) | A.Merge (_,_,lst) ->
       List.map (fun (_,e) -> aux e) lst
@@ -345,14 +341,23 @@ let minimize_node_eq id_typ_map ue lst = function
     let lhs = if b then novarindex_lhs else lhs in
     Some (A.Equation (pos, lhs, expr))
 
-let minimize_item id_typ_map ue lst = function
-  | A.AnnotMain b -> [A.AnnotMain b]
-  | A.AnnotProperty (p,str,e) -> [A.AnnotProperty (p,str,e)]
-  | A.Body eq ->
-    begin match minimize_node_eq id_typ_map ue lst eq with
-    | None -> []
-    | Some eq -> [A.Body eq]
-    end
+let rec minimize_item id_typ_map ue lst = function
+  | A.AnnotMain (p, b) -> [A.AnnotMain (p, b)]
+  | A.AnnotProperty (p, str, e, k) -> [A.AnnotProperty (p, str, e, k)]
+  | A.Body eq -> (
+    match minimize_node_eq id_typ_map ue lst eq with
+      | None -> []
+      | Some eq -> [A.Body eq]
+  )
+  | A.IfBlock (pos, e, l1, l2) -> 
+    [A.IfBlock (pos, e, List.map (minimize_item id_typ_map ue lst) l1 |> List.flatten, 
+                        List.map (minimize_item id_typ_map ue lst) l2 |> List.flatten)]
+  | A.FrameBlock (pos, vars, nes, nis) -> 
+    [A.FrameBlock(pos, vars, List.map (fun eq -> match (minimize_node_eq id_typ_map ue lst eq) 
+                                         with | None -> [] | Some eq -> [eq]) 
+                                      nes 
+                                      |> List.flatten, 
+                       List.map (minimize_item id_typ_map ue lst) nis |> List.flatten)]
 
 let minimize_const_decl _ue _lst = function
   | A.UntypedConst (p,id,e) -> A.UntypedConst (p,id,e)
@@ -391,7 +396,10 @@ let minimize_contract_node_eq ue lst cne =
   match cne with
   | A.ContractCall _ -> [cne]
   | A.GhostConst d -> [A.GhostConst (minimize_const_decl ue lst d)]
-  | A.GhostVar d -> [A.GhostVar (minimize_const_decl ue lst d)]
+  | A.GhostVars (pos, (GhostVarDec(_, til) as lhs), expr) ->
+    let typ = List.map (fun (_, _, t) -> t) til in
+    let (_, expr) = minimize_expr (ue false) lst typ expr in
+    [A.GhostVars (pos, lhs, expr)]
   | A.Assume (pos,_,_,_)
   | A.Guarantee (pos,_,_,_) ->
     if List.exists (fun p -> Lib.equal_pos p pos) lst
@@ -489,7 +497,7 @@ let minimize_lustre_ast ?(valid_lustre=false) in_sys (_,loc_core,_) ast =
             let old = try PosMap.find pos acc with Not_found -> SVSet.empty in
             PosMap.add pos (SVSet.add sv old) acc
           )
-          acc (LustreNode.get_state_var_defs sv)
+          acc ((LustreNode.get_state_var_defs sv) |> ((fun (x, y) -> x @ y)))
         )
         acc (LustreNode.get_all_state_vars node)
       ) PosMap.empty (InputSystem.retrieve_lustre_nodes in_sys) in
@@ -608,7 +616,8 @@ let add_as_candidate os_invs sys =
       prop_name = Format.sprintf "%%inv_%i" (cnt ()) ;
       prop_source = Property.Candidate None ;
       prop_term = t ;
-      prop_status = PropUnknown
+      prop_status = PropUnknown ;
+      prop_kind = Invariant ;
     }
   in
   let props = List.map create_candidate os_invs in
@@ -732,6 +741,13 @@ let at_least_one_true svs =
   |> List.map (fun sv -> Term.mk_var (Var.mk_const_state_var sv))
   |> Term.mk_or
 
+let get_logic_with_IA sys =
+  match TS.get_logic sys with
+  | `Inferred features -> (
+    `Inferred (TermLib.FeatureSet.add TermLib.IA features)
+  )
+  | l -> l (* Rely on original logic *)
+
 let prepare_ts_for_cs_check sys enter_nodes init_consts keep test =
   let eq_of_actlit = eq_of_actlit_sv (core_union keep test) in
   let main_scope = TS.scope_of_trans_sys sys in
@@ -770,6 +786,7 @@ let prepare_ts_for_cs_check sys enter_nodes init_consts keep test =
   let init_eq =
     Term.mk_and (List.rev_append init_consts [init_eq])
   in
+  let sys = TS.set_logic sys (get_logic_with_IA sys) in
   TS.set_subsystem_equations sys (TS.scope_of_trans_sys sys) init_eq trans_eq
 
 
@@ -867,6 +884,8 @@ let compute_local_cs sys prop_names enter_nodes cex keep test =
     (SMTSolver.declare_fun solver)
     (SMTSolver.declare_sort solver)
     Numeral.zero num_k;
+
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver) ;
 
   TS.init_of_bound None sys Numeral.zero
   |> SMTSolver.assert_term solver;
@@ -1051,7 +1070,7 @@ let get_logic ?(pathcomp=false) sys =
 let create_solver ?(pathcomp=false) ?(approximate=false) sys actlits bmin bmax =
   let solver =
     SMTSolver.create_instance ~timeout:(Flags.IVC.ivc_uc_timeout ())
-    ~produce_assignments:pathcomp ~produce_cores:true
+    ~produce_models:pathcomp ~produce_unsat_assumptions:true
     ~minimize_cores:(not approximate) (get_logic ~pathcomp sys) (Flags.Smt.solver ()) in
   List.iter (SMTSolver.declare_fun solver) actlits ;
   TS.declare_sorts_ufs_const sys (SMTSolver.declare_fun solver) (SMTSolver.declare_sort solver) ;
@@ -1181,6 +1200,8 @@ let compute_unsat_core ?(pathcomp=None) ?(approximate=false)
       define (TS.trans_uf_symbol t) (TS.trans_formals t) trans
     )
   else TS.define_subsystems sys (SMTSolver.define_fun solver) ;
+
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver) ;
 
   SMTSolver.assert_term solver t |> ignore ;
 
@@ -1609,7 +1630,7 @@ let umivc_ ?(os_invs=[]) make_ts_analyzer sys props k enter_nodes
     let sys_cs = List.fold_left (fun acc sv -> TS.add_global_constant acc (Var.mk_const_state_var sv)) sys_cs actsvs in
 
     (* Initialize the seed map *)
-    let map = SMTSolver.create_instance ~produce_assignments:true
+    let map = SMTSolver.create_instance ~produce_models:true
       (`Inferred (TermLib.FeatureSet.of_list [IA; LA])) (Flags.Smt.solver ()) in
     actsvs
     |> List.map Var.mk_const_state_var

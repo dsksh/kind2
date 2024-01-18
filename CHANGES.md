@@ -1,3 +1,128 @@
+# Kind 2 v2.1.1
+
+This release includes some minor improvements and various fixes. Notably:
+
+- Fix soundness bug in IC3IA engine
+- Allow variables with subrange types in the interface of a contract node
+- Accept new versions of cvc5 for proof production (up to 1.1.0)
+
+
+# Kind 2 v2.1.0
+
+This release includes multiple improvements and bug fixes. Notably:
+
+- Add new option for printing the set of viable states of a realizable contract (`--print_viable_states`).
+- Allow the second argument of a shift operator to be non-constant.
+- Add support for the latest versions of SMT solver Bitwuzla (v0.1.1 and above).
+- Fix compatibility issue with OCaml 5.0.0+
+- Fix printing of values of stateless variables in counterexamples (bug introduced in v2.0.0).
+- Fix several bugs related to the definition and use of arrays in Lustre models.
+- Add static checks on the definition of global subrange constants.
+- Accept `param` keyword for the declaration of system parameters (global constants without a definition).
+- Add subrange and enum constraints on system parameters.
+- Fix type checking and handling of constant node arguments.
+- Other improvements and bug fixes in the Lustre front end.
+
+
+# Kind 2 v2.0.0
+
+New features:
+
+- Support for SMTInterpol as a backend solver.
+- New IC3 engine based on Implicit (Predicate) Abstraction:
+  - Supported interpolating SMT solvers: MathSAT, SMTInterpol, and OpenSMT.
+  - Generation of interpolants with Z3 and cvc5 supported through built-in method based on QE.
+  - See [documentation](https://kind.cs.uiowa.edu/kind2_user_doc/1_techniques/4_ic3.html) for more details.
+- Support for subrange types with an open end:
+  - `type T = subrange [*,N] of int`
+  - `type T = subrange [N,*] of int`
+
+Improvements:
+
+- Add additional non-vacuity check for contract modes.
+  - The new check considers only the info of the contract.
+- Optimize performance of counterexample reconstruction.
+- Fix handling of reachability properties in compositional-modular analysis.
+- Fix simulation of systems with imported subnodes.
+- Fix logic setting for Yices 2.
+- Fix logic setting and constant declaration in certificates.
+
+Changes:
+
+- Add `--exit_code_mode` option to control exit code convention.
+
+
+# Kind 2 v1.9.0
+
+New features:
+
+- Add support for `elsif` clauses in If-Then-Else constraints.
+- Add dedicated syntax for reachability properties of the form:
+  - `check reachable P [from <int>] [within <int>]`
+  - `check reachable P at <int>`
+  The modifiers `from`, `within` and `at` allow users to specify a lower and upper bound on the number of execution steps in the witness trace.
+- Add dedicated syntax for conditional properties of the form:
+  - `check A provided B`
+- Add non-vacuity checks for conditional properties and contract mode implications.
+- Add command-line options `--check_reach` and `--check_nonvacuity` that allow users to enable/disable reachability and non-vacuity checks.
+- Add command-line options `--print_cex` and `--print_witness` that allow users to enable/disable printing of counterexamples and reachability witnesses.
+- Add command-line options `--dump_witness` and `--dump_deadlock` that allow users to dump witnesses and deadlocks to files. Note: Kind 2 already supported the command-line option `--dump_cex`.
+
+Improvements:
+
+- Fix underreporting issue in the computation of conflicting constraints (bug introduced in v1.6.0).
+- Fix reporting of contract mode elements in IVCs and conflicting constraints (bug introduced in v1.8.0).
+- Fix setting of SMT-LIB logic for the non-linear combination of integers and reals.
+- Fix computation of dependencies for clock operators in new the Lustre front-end.
+- Other fixes and improvements in the new front-end.
+
+Changes:
+
+- New backward-incompatible convention for exit codes.
+  - Now Kind 2 follows the POSIX convention of returning `0` for successful checks.
+  - See [documentation](https://kind.cs.uiowa.edu/kind2_user_doc/3_output/3_exit_codes.html) for more details.
+- Add `--fake_filepath` option for LSP server.
+
+
+# Kind 2 v1.8.0
+
+New features:
+
+- Add syntax for If-Then-Else constraints and Frame Condition constraints (see [documentation](https://kind.cs.uiowa.edu/kind2_user_doc/2_input/1_lustre.html#if-statements-and-frame-conditions)).
+- Add support for SMT solver Bitwuzla.
+  - Its predecessor, Boolector, is no longer supported.
+- Add option `--flatten_proof` to break down LFSC proofs into a sequence of lemmas.
+  - This option helps reduce the memory footprint of the LFSC checker and improve its performance as the proof for each lemma is verified by the LFSC checker independently.
+
+Improvements:
+
+- Fixes and improvements solving machine integer problems:
+  - Support for non-standard bit-vector constants and symbols returned by MathSAT and Z3
+  - Fix path compression bit-vector encoding in minimization of set of invariants.
+- Fixes and improvements in the new Lustre front-end.
+
+
+# Kind 2 v1.7.0
+
+New features:
+
+- Support for new SMT solver cvc5.
+  - Its predecessor, CVC4, is no longer supported.
+- A revamp of Kind 2's proof production facility:
+  - The new version replaces CVC4 with cvc5 as the main back-end proof-producing SMT solver.
+  - It produces more detailed proofs and covers a wider range of input models.
+  - The new proofs are still processable by the external proof checker LFSC.
+
+Improvements:
+
+- Support for unary negation and subtraction of unsigned machine integers.
+- Fix invariant pruner: some non-trivial one-state invariants were not included in certificates.
+- Fix problem with reported locations in IVC output.
+- Fix selection of logic in computation of MCS.
+- Fix version detection of SMT solvers.
+- Multiple fixes and improvements in the new Lustre front-end.
+
+
 # Kind 2 v1.6.0
 
 New features:

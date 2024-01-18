@@ -18,37 +18,60 @@
 
 include GenericSMTLIBDriver
 
+let check_logic logic =
+  let open TermLib in
+  let open TermLib.FeatureSet in
+  match logic with
+  | `Inferred l -> (
+    if mem Q l then (
+      let msg =
+        Format.asprintf
+          "In %a: Yices 2 does not support problems with quantifiers"
+          Lib.pp_print_kind_module (KEvent.get_module ())
+       in
+       failwith msg
+    ) ;
+    if mem BV l && (mem IA l || mem RA l) then (
+      let msg =
+        Format.asprintf
+          "In %a: Yices 2 does not support programs with both integers/reals and machine integers"
+          Lib.pp_print_kind_module (KEvent.get_module ())
+       in
+       failwith msg
+    ) ;
+    if mem NA l  then (
+      if mem A l then (
+        let msg =
+          Format.asprintf
+            "In %a: Yices 2 does not support non-linear arithmetic problems with arrays"
+            Lib.pp_print_kind_module (KEvent.get_module ())
+        in
+        failwith msg
+      ) ;
+      if Flags.Smt.check_sat_assume () then (
+        Flags.Smt.set_check_sat_assume false;
+        KEvent.log Lib.L_warn
+          "In %a: Yices 2 does not support check-sat-assuming with non-linear problems.@ \
+          check_sat_assume option disabled"
+          Lib.pp_print_kind_module (KEvent.get_module ())
+      )
+    )
+  )
+  | _ -> ()
+
 
 (* Configuration for Yices *)
 let cmd_line
     logic
     timeout
-    _ (* produce_assignments *) 
+    _ (* produce_models *) 
     _ (* produce_proofs *)
-    _ (* produce_cores *)
+    _ (* produce_unsat_cores *)
+    _ (* produce_unsat_assumptions *)
     _ (* minimize_cores *) 
     _ (* produce_interpolants *) = 
 
-  (let open TermLib in
-   let open TermLib.FeatureSet in
-   match logic with
-   | `Inferred l when mem NA l && Flags.Smt.check_sat_assume () -> (
-     Flags.Smt.set_check_sat_assume false;
-     KEvent.log Lib.L_warn
-       "In %a: Yices 2 does not support check-sat-assuming with non-linear models.@ \
-        Disabling check_sat_assume."
-       Lib.pp_print_kind_module (KEvent.get_module ())
-   )
-   | `Inferred l when mem BV l && (mem IA l || mem RA l) -> (
-     let msg =
-       Format.asprintf
-         "In %a: Yices 2 does not support programs with both integers/reals and machine integers"
-           Lib.pp_print_kind_module (KEvent.get_module ())
-     in
-     failwith msg
-   )
-   | _ -> ()
-  );
+  check_logic logic ;
 
   (* Path and name of Yices executable *)
   let yices2smt2_bin = Flags.Smt.yices2smt2_bin () in
@@ -88,3 +111,11 @@ let cmd_line
 let check_sat_limited_cmd _ = 
   failwith "check-sat with timeout not implemented for Yices2"
 
+(*
+let string_of_logic l =
+  let open TermLib in
+  let open TermLib.FeatureSet in
+  match l with
+  | `Inferred l when mem IA l && mem RA l -> "ALL"
+  | _ ->  GenericSMTLIBDriver.string_of_logic l
+*)

@@ -586,7 +586,10 @@ module RunInvPrint: PostAnalysis = struct
         let k_min, invs_min =
           CertifChecker.minimize_invariants sys None None
         in
-        KEvent.log_uncond
+        match invs_min with
+        | [] -> Ok()
+        | _ -> (
+          KEvent.log_uncond
           "Minimization result: \
             @[<v>\
               all properties valid by %d-induction@ \
@@ -594,15 +597,16 @@ module RunInvPrint: PostAnalysis = struct
             @]\
           "
           k_min (List.length invs_min) ;
-        List.iter
-          (fun inv ->
-            let fmt_inv =
-              LustreExpr.pp_print_term_as_expr_mvar false var_map
-            in
-            KEvent.log_uncond "%a" fmt_inv inv
-          )
-        invs_min ;
-        Ok ()
+          List.iter
+            (fun inv ->
+              let fmt_inv =
+                LustreExpr.pp_print_term_as_expr_mvar false var_map
+              in
+              KEvent.log_uncond "%a" fmt_inv inv
+            )
+          invs_min ;
+          Ok ()
+        )
       ) with
       | CertifChecker.CouldNotProve err -> error(
         fun fmt ->
@@ -621,17 +625,19 @@ end
 module RunCertif: PostAnalysis = struct
   let name = "certification"
   let title = name
-  let is_active () = Flags.Certif.certif ()
+  let is_active () = Flags.Certif.certif () || Flags.Certif.proof ()
   let run in_sys param _ results =
     let top = (Analysis.info_of_param param).Analysis.top in
     last_result results top |> chain (
       fun result ->
         let sys = result.Analysis.sys in
         let uid = (Analysis.info_of_param param).Analysis.uid in
+        (
+          if Flags.Certif.certif () then
+            CertifChecker.generate_smt2_certificates in_sys sys
+        ) ;
         ( if Flags.Certif.proof () then
             CertifChecker.generate_all_proofs uid in_sys sys
-          else
-            CertifChecker.generate_smt2_certificates in_sys sys
         ) ;
         Ok ()
     )

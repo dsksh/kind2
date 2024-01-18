@@ -80,10 +80,11 @@ let mk_span start_pos end_pos =
 (* %token ARRAY *)
 %token CARET
 %token DOTDOT
-%token PIPE
+%token BAR
 
-(* Token for constant declarations *)
+(* Token for constant/parameter declarations *)
 %token CONST
+%token PARAM
     
 (* Tokens for node declarations *)
 %token IMPORTED
@@ -127,8 +128,14 @@ let mk_span start_pos end_pos =
 (* Token for assertions *)
 %token ASSERT
     
-(* Token for check *)
+(* Tokens for check *)
 %token CHECK
+%token REACHABLE
+%token PROVIDED
+%token INVARIANT
+%token FROM
+%token AT
+%token WITHIN
 
 (* Tokens for Boolean operations *)
 %token TRUE
@@ -138,9 +145,12 @@ let mk_span start_pos end_pos =
 %token XOR
 %token OR
 %token IF
+%token FI
+%token FRAME
 %token WITH
 %token THEN
 %token ELSE
+%token ELSIF
 %token IMPL
 %token HASH
 %token FORALL
@@ -188,9 +198,9 @@ let mk_span start_pos end_pos =
 %token EOF
     
 (* Priorities and associativity of operators, lowest first *)
-%nonassoc UINT8 UINT16 UINT32 UINT64 INT8 INT16 INT32 INT64
+%nonassoc UINT8 UINT16 UINT32 UINT64 INT8 INT16 INT32 INT64 
 %nonassoc WHEN CURRENT 
-%left PIPE
+%left BAR
 %nonassoc ELSE
 %right ARROW
 %nonassoc prec_forall prec_exists
@@ -229,6 +239,9 @@ decl:
   | d = const_decl { List.map 
                        (function e -> A.ConstDecl (mk_span $startpos $endpos, e)) 
                        d }
+  | d = param_decl { List.map 
+                       (function e -> A.ConstDecl (mk_span $startpos $endpos, e)) 
+                       d }
   | d = type_decl { List.map 
                       (function e -> A.TypeDecl (mk_span $startpos $endpos, e)) 
                       d }
@@ -260,6 +273,9 @@ decl:
 (* A constant declaration *)
 const_decl: CONST; l = nonempty_list(const_decl_body) { List.flatten l }
 
+(* A constant declaration *)
+param_decl: PARAM; l = nonempty_list(param_decl_body) { List.flatten l }
+
 (* The body of a constant declaration *)
 const_decl_body:
 
@@ -280,6 +296,19 @@ const_decl_body:
   (* Defined constant with a type *)
   | c = typed_ident; EQUALS; e = expr; SEMICOLON 
     { let (_, s, t) = c in [A.TypedConst (mk_pos $startpos, s, e, t)] }
+
+(* The body of a parameter declaration *)
+param_decl_body:
+
+  (* Imported (free) constant 
+
+     Separate rule for singleton list to avoid shift/reduce conflict *)
+  | h = ident; COLON; t = lustre_type; SEMICOLON 
+    { [A.FreeConst (mk_pos $startpos, h, t)] } 
+
+  (* Imported (free) constant *)
+  | h = ident; COMMA; l = ident_list; COLON; t = lustre_type; SEMICOLON 
+    { List.map (function e -> A.FreeConst (mk_pos $startpos, e, t)) (h :: l) } 
 
 
 (* ********************************************************************** *)
@@ -312,6 +341,9 @@ type_decl:
                         A.RecordType (mk_pos $startpos, e, t))) 
          l }
 
+expr_opt:
+  | e = expr { Some e }
+  | MULT { None }
 
 (* A type *)
 lustre_type:
@@ -330,9 +362,9 @@ lustre_type:
   | INT64 { A.Int64 (mk_pos $startpos)}
   | SUBRANGE;
     LSQBRACKET;
-    l = expr; 
+    l = expr_opt; 
     COMMA; 
-    u = expr; 
+    u = expr_opt; 
     RSQBRACKET 
     OF
     INT 
@@ -408,14 +440,9 @@ node_def:
 
   { (List.flatten l, e) }
 
-
-contract_ghost_var:
-  | VAR ;
-    i = ident ; COLON ; t = lustre_type; EQUALS ; e = qexpr ;
-    SEMICOLON 
-    { A.GhostVar (A.TypedConst (mk_pos $startpos, i, e, t)) }
-(*  | VAR ; i = ident ; EQUALS ; e = expr ; SEMICOLON 
-    { A.GhostVar (A.UntypedConst (mk_pos $startpos, i, e)) } *)
+contract_ghost_vars:
+  | VAR; l = typed_idents_list; EQUALS; e = expr; SEMICOLON
+    { A.GhostVars (mk_pos $startpos, GhostVarDec (mk_pos $startpos, l), e) }
 
 contract_ghost_const:
   | CONST; i = ident; COLON; t = lustre_type; EQUALS; e = qexpr; SEMICOLON 
@@ -465,7 +492,7 @@ assumption_vars:
   }
 
 contract_item:
-  | v = contract_ghost_var { v } 
+  | e = contract_ghost_vars { e }
   | c = contract_ghost_const { c }
   | a = contract_assume { a }
   | g = contract_guarantee { g }
@@ -545,6 +572,9 @@ node_local_decl:
   | c = const_decl { List.map 
                        (function e -> A.NodeConstDecl (mk_pos $startpos, e))
                        c }
+  | p = param_decl { List.map 
+                       (function e -> A.NodeConstDecl (mk_pos $startpos, e))
+                       p }
   | v = var_decls { List.map 
                       (function e -> A.NodeVarDecl (mk_pos $startpos, e)) 
                       v }
@@ -566,42 +596,126 @@ boolean:
 
     
 main_annot:
-  | MAIN_P_ANNOT ; SEMICOLON { A.AnnotMain true }
-  | MAIN_PSBLOCKSTART ; option (SEMICOLON) ; PSBLOCKEND { A.AnnotMain true }
-  | MAIN_SSBLOCKSTART ; option (SEMICOLON) ; SSBLOCKEND { A.AnnotMain true }
-  | MAIN_B_ANNOT ; COLON ; b = boolean ; SEMICOLON { A.AnnotMain b }
+  | MAIN_P_ANNOT ; SEMICOLON { A.AnnotMain (mk_pos $startpos, true) }
+  | MAIN_PSBLOCKSTART ; option (SEMICOLON) ; PSBLOCKEND { A.AnnotMain (mk_pos $startpos, true) }
+  | MAIN_SSBLOCKSTART ; option (SEMICOLON) ; SSBLOCKEND { A.AnnotMain (mk_pos $startpos, true) }
+  | MAIN_B_ANNOT ; COLON ; b = boolean ; SEMICOLON { A.AnnotMain (mk_pos $startpos, b) }
   | MAIN_PSBLOCKSTART ; COLON ; b = boolean ; option (SEMICOLON) ; PSBLOCKEND {
-    A.AnnotMain b
+    A.AnnotMain (mk_pos $startpos, b)
   }
   | MAIN_SSBLOCKSTART ; COLON ; b = boolean ; option (SEMICOLON) ; SSBLOCKEND {
-    A.AnnotMain b
+    A.AnnotMain (mk_pos $startpos, b)
   }
 
+
+property_timestep: 
+  | WITHIN ; timestep = NUMERAL
+    { A.Reachable (Some (Within (int_of_string (HString.string_of_hstring timestep)))) } 
+  | AT ; timestep = NUMERAL
+    { A.Reachable (Some (At (int_of_string (HString.string_of_hstring timestep)))) }
+  | FROM ; timestep = NUMERAL
+    { A.Reachable (Some (From (int_of_string (HString.string_of_hstring timestep)))) }
+  | FROM ; timestep = NUMERAL ; 
+    WITHIN ; timestep2 = NUMERAL 
+    { A.Reachable (Some (FromWithin (int_of_string (HString.string_of_hstring timestep), 
+                                     int_of_string (HString.string_of_hstring timestep2)))) }
+  | {A.Reachable None} 
+
+
 property:
-  | PROPERTY_ANNOT ; name = option(STRING) ; e = qexpr ; SEMICOLON
-    { A.AnnotProperty (mk_pos $startpos, name, e) }
-  | PROPERTY_PSBLOCKSTART ; name = option(STRING);
+  (* Invariant properties *)
+  | PROPERTY_ANNOT ; option(INVARIANT) ; name = option(STRING) ; e = qexpr ; SEMICOLON
+    { A.AnnotProperty (mk_pos $startpos, name, e, Invariant) }
+  | PROPERTY_ANNOT ; option(INVARIANT) ; name = option(STRING) ; e1 = qexpr ; PROVIDED ; e2 = qexpr ; SEMICOLON
+    { A.AnnotProperty (mk_pos $startpos, name, e1, Provided e2) }
+  | PROPERTY_PSBLOCKSTART ; option(INVARIANT) ; name = option(STRING);
     e = qexpr; SEMICOLON ; PSBLOCKEND
-    { A.AnnotProperty (mk_pos $startpos, name, e) }
-  | PROPERTY_PSBLOCKSTART ; name = option(STRING);
+    { A.AnnotProperty (mk_pos $startpos, name, e, Invariant) }
+  | PROPERTY_PSBLOCKSTART ; option(INVARIANT) ; name = option(STRING);
     COLON; e = qexpr; SEMICOLON ; PSBLOCKEND
-    { A.AnnotProperty (mk_pos $startpos, name, e) }
-  | PROPERTY_SSBLOCKSTART ; name = option(STRING);
+    { A.AnnotProperty (mk_pos $startpos, name, e, Invariant) }
+  | PROPERTY_SSBLOCKSTART ; option(INVARIANT) ; name = option(STRING);
     e = qexpr ; SEMICOLON; SSBLOCKEND
-    { A.AnnotProperty (mk_pos $startpos, name, e) }
-  | PROPERTY_SSBLOCKSTART ; name = option(STRING);
+    { A.AnnotProperty (mk_pos $startpos, name, e, Invariant) }
+  | PROPERTY_SSBLOCKSTART ; option(INVARIANT) ; name = option(STRING);
     COLON; e = qexpr ; SEMICOLON; SSBLOCKEND
-    { A.AnnotProperty (mk_pos $startpos, name, e) }
+    { A.AnnotProperty (mk_pos $startpos, name, e, Invariant) }
+
+  (* Reachability queries *)
+  | PROPERTY_ANNOT ; REACHABLE ; name = option(STRING) ; e = qexpr ; bound = property_timestep; SEMICOLON
+    { A.AnnotProperty (mk_pos $startpos, name, e, bound) }
+  | PROPERTY_PSBLOCKSTART ; REACHABLE ; name = option(STRING);
+    e = qexpr;  bound = property_timestep; SEMICOLON ; PSBLOCKEND
+    { A.AnnotProperty (mk_pos $startpos, name, e, bound) }
+  | PROPERTY_PSBLOCKSTART ; REACHABLE ; name = option(STRING);
+    COLON; e = qexpr; bound = property_timestep; SEMICOLON ; PSBLOCKEND
+    { A.AnnotProperty (mk_pos $startpos, name, e, bound) }
+  | PROPERTY_SSBLOCKSTART ; REACHABLE ; name = option(STRING);
+    e = qexpr ; bound = property_timestep; SEMICOLON; SSBLOCKEND
+    { A.AnnotProperty (mk_pos $startpos, name, e, bound) }
+  | PROPERTY_SSBLOCKSTART ; REACHABLE ; name = option(STRING);
+    COLON; e = qexpr ;  bound = property_timestep; SEMICOLON; SSBLOCKEND
+    { A.AnnotProperty (mk_pos $startpos, name, e, bound) }
 
 check:
-  | CHECK ; name = option(STRING) ; e = qexpr ; SEMICOLON
-    { A.AnnotProperty (mk_pos $startpos, name, e) }
+  | CHECK ; option(INVARIANT) ; name = option(STRING) ; e = qexpr ; SEMICOLON
+    { A.AnnotProperty (mk_pos $startpos, name, e, Invariant) }
+  | CHECK ; option(INVARIANT) ; name = option(STRING) ; e1 = qexpr ; PROVIDED ; e2 = qexpr ; SEMICOLON
+    { A.AnnotProperty (mk_pos $startpos, name, e1, Provided e2) }
+  | CHECK ; REACHABLE ; name = option(STRING) ; e = qexpr ; bound = property_timestep; SEMICOLON
+    { A.AnnotProperty (mk_pos $startpos, name, e, bound) }
 
 node_item:
+  | i = node_if_block { i }
+  | f = node_frame_block { f }
   | e = node_equation { A.Body e }
   | a = main_annot { a }
   | p = property { p }
   | p = check { p }
+
+
+elsif_list:
+  | ELSIF; e = expr; THEN ;
+      l1 = nonempty_list(node_item);
+  { [A.IfBlock(mk_pos $startpos, e, l1, [])] }
+  | ELSIF; e = expr; THEN ;
+      l1 = nonempty_list(node_item);
+    ELSE;
+      l2 = nonempty_list(node_item);
+  { [A.IfBlock(mk_pos $startpos, e, l1, l2)] }
+  | ELSIF; e = expr; THEN ;
+      l1 = nonempty_list(node_item); 
+    l2 = elsif_list;
+    { [A.IfBlock(mk_pos $startpos, e, l1, l2)] }
+
+node_if_block:
+  | IF; e = expr; THEN; 
+      l1 = nonempty_list(node_item);
+    FI;
+    { A.IfBlock (mk_pos $startpos, e, l1, []) }
+  | IF; e = expr; THEN; 
+      l1 = nonempty_list(node_item);
+    ELSE; 
+      l2 = nonempty_list(node_item);
+    FI;
+    { A.IfBlock (mk_pos $startpos, e, l1, l2) }
+  | IF; e = expr; THEN;
+    l = nonempty_list(node_item);
+    block = elsif_list
+    FI;
+    { A.IfBlock(mk_pos $startpos, e, l, block) }
+
+
+
+
+
+node_frame_block:
+  | FRAME; LPAREN; l1 = ident_list_pos; RPAREN;
+    l2 = list(node_equation);
+    LET;
+    l3 = list(node_item);
+    TEL;
+  { A.FrameBlock (mk_pos $startpos, l1, l2, l3) }
 
 
 (* An equations of a node *)
@@ -735,8 +849,9 @@ pexpr(Q):
     A.TupleProject (mk_pos $startpos, e, idx) }
 
   (* An array slice (not quantified) *)
-  | e = pexpr(Q); LSQBRACKET; s = array_slice; RSQBRACKET
-    { A.ArraySlice (mk_pos $startpos, e, s) }
+  | pexpr(Q); LSQBRACKET; array_slice; RSQBRACKET
+    { let pos = mk_pos $startpos in
+      fail_at_position pos "Unsupported operator: array slice" }
 
   (* An array index (not quantified) *)
   | e = pexpr(Q); LSQBRACKET; i = expr; RSQBRACKET
@@ -744,7 +859,7 @@ pexpr(Q):
     
   (* A record field projection (not quantified) *)
   | s = pexpr(Q); DOT; t = ident 
-    { A.RecordProject (mk_pos $startpos, s, t) }
+    { A.RecordProject (mk_pos $startpos($2), s, t) }
 
   (* A record (not quantified) *)
   | t = ident; 
@@ -752,7 +867,9 @@ pexpr(Q):
     { A.RecordExpr (mk_pos $startpos, t, f) }
 
   (* An array concatenation *)
-  | e1 = pexpr(Q); PIPE; e2 = pexpr(Q) { A.ArrayConcat (mk_pos $startpos, e1, e2) } 
+  | pexpr(Q); BAR; pexpr(Q) { 
+    let pos = mk_pos $startpos in
+    fail_at_position pos "Unsupported operator: array concatenation" } 
 
   (* with operator for updating fields of a structure (not quantified) *)
   | LPAREN; 
@@ -780,7 +897,9 @@ pexpr(Q):
   | e1 = pexpr(Q); OR; e2 = pexpr(Q) { A.BinaryOp (mk_pos $startpos, A.Or, e1, e2) }
   | e1 = pexpr(Q); XOR; e2 = pexpr(Q) { A.BinaryOp (mk_pos $startpos, A.Xor, e1, e2) }
   | e1 = pexpr(Q); IMPL; e2 = pexpr(Q) { A.BinaryOp (mk_pos $startpos, A.Impl, e1, e2) }
-  | HASH; LPAREN; e = pexpr_list(Q); RPAREN { A.NArityOp (mk_pos $startpos, A.OneHot, e) }
+  | HASH; LPAREN; pexpr_list(Q); RPAREN { 
+    let pos = mk_pos $startpos in
+    fail_at_position pos "Unsupported operator: #" }
 
   (* A Bitvector operator *)
   | BVNOT; e = pexpr(Q) { A.UnaryOp (mk_pos $startpos, A.BVNot, e) }
@@ -819,15 +938,27 @@ pexpr(Q):
   | IF; e1 = pexpr(Q); THEN; e2 = pexpr(Q); ELSE; e3 = pexpr(Q) 
     { A.TernaryOp (mk_pos $startpos, A.Ite, e1, e2, e3) }
 
+  (* 'Any' operation *)
+  (*| ANY; LCURLYBRACKET; id = typed_ident; BAR; e = pexpr(Q); RCURLYBRACKET
+    { A.AnyOp (mk_pos $startpos, id, e, None) } 
+  | ANY; LCURLYBRACKET; id = typed_ident; BAR; e1 = pexpr(Q); ASSUMING; e2 = pexpr(Q); RCURLYBRACKET
+    { A.AnyOp (mk_pos $startpos, id, e1, Some e2) } 
+  | ANY; ty = lustre_type;
+    { A.AnyOp (mk_pos $startpos, (mk_pos $startpos, HString.mk_hstring "_", ty), Const(mk_pos $startpos, True), None)}*)
+
   (* Recursive node call *)
-  | WITH; e1 = pexpr(Q); THEN; e2 = pexpr(Q); ELSE; e3 = pexpr(Q) 
-    { A.TernaryOp (mk_pos $startpos, A.With, e1, e2, e3) }
+  | WITH; pexpr(Q); THEN; pexpr(Q); ELSE; pexpr(Q) 
+    { let pos = mk_pos $startpos in
+      fail_at_position pos "Recursive node calls are not supported" }
 
   (* when operator on qexpression  *)
   | e1 = pexpr(Q); WHEN; e2 = clock_expr { A.When (mk_pos $startpos, e1, e2) }
 
   (* current operator on qexpression *)
-  | CURRENT; e = pexpr(Q) { A.Current (mk_pos $startpos, e) }
+  | CURRENT; pexpr(Q) {
+    let pos = mk_pos $startpos in
+    fail_at_position pos "Unsupported operator: current"
+   }
 
   (* condact call with defaults *)
   | CONDACT 
@@ -961,10 +1092,9 @@ pexpr(Q):
     
   (* A temporal operation *)
   | PRE; e = pexpr(Q) { A.Pre (mk_pos $startpos, e) }
-  | FBY LPAREN; e1 = pexpr(Q) COMMA; s = NUMERAL; COMMA; e2 = pexpr(Q) RPAREN
-    { let idx = try (int_of_string (HString.string_of_hstring s)) with
-                | _ -> fail_at_position (mk_pos $startpos(s)) "Fby argument exceeds int range" in
-      A.Fby (mk_pos $startpos, e1, idx, e2) }
+  | FBY LPAREN; pexpr(Q) COMMA; NUMERAL; COMMA; pexpr(Q) RPAREN
+    { let pos = mk_pos $startpos in
+      fail_at_position pos "Unsupported operator: fby" }
 
   | e1 = pexpr(Q); ARROW; e2 = pexpr(Q) { A.Arrow (mk_pos $startpos, e1, e2) }
 
@@ -996,13 +1126,14 @@ node_call:
     { A.Call (mk_pos $startpos, s, a) }
 
   (* Call a node with static parameters *)
-  | s = ident; 
-    p = tlist 
+  | ident; 
+    tlist 
          (LPARAMBRACKET, SEMICOLON, RPARAMBRACKET, node_call_static_param); 
     LPAREN; 
-    a = separated_list(COMMA, expr); 
+    separated_list(COMMA, expr); 
     RPAREN 
-    { A.CallParam (mk_pos $startpos, s, p, a) }
+    { let pos = mk_pos $startpos in
+      fail_at_position pos "Node calls with static parameters are not supported" }
 
 
 (* An array slice *)
@@ -1067,20 +1198,23 @@ ident_list_pos :
     { (mk_pos $startpos, i) :: l }
 
 
+
 (* A list of comma-separated identifiers with a type *)
 typed_idents: 
   | l = ident_list_pos; COLON; t = lustre_type 
     (* Pair each identifier with the type *)
     { List.map (function (pos, e) -> (pos, e, t)) l }
 
-(*
+
+
 (* A list of lists of typed identifiers *)
 typed_idents_list:
-  | a = separated_list(SEMICOLON, typed_idents) 
+  | a = separated_list(COMMA, typed_idents) 
 
     (* Return a flat list *)
     { List.flatten a }
-*)
+
+
 
 (* Typed identifiers that may be constant *)
 const_typed_idents: 

@@ -26,6 +26,7 @@ module LH = LustreAstHelpers
 module LN = LustreNode
 module LG = LustreGlobals
 module LD = LustreDeclarations
+module LW = LustreWarnings
 
 module LNG = LustreNodeGen
 module LPI = LustreParser.Incremental
@@ -39,19 +40,27 @@ module AD = LustreAstDependencies
 module LAN = LustreAstNormalizer
 module LS = LustreSyntaxChecks
 module LIA = LustreAbstractInterpretation
+module LDI = LustreDesugarIfBlocks
+module LDF = LustreDesugarFrameBlocks
+module RMA = LustreRemoveMultAssign
+module LAD = LustreArrayDependencies
+module LDN = LustreDesugarAnyOps
 
 type error = [
+  | `LustreArrayDependencies of Lib.position * LustreArrayDependencies.error_kind
   | `LustreAstDependenciesError of Lib.position * LustreAstDependencies.error_kind
   | `LustreAstInlineConstantsError of Lib.position * LustreAstInlineConstants.error_kind
+  | `LustreAbstractInterpretationError of Lib.position * LustreAbstractInterpretation.error_kind
   | `LustreAstNormalizerError
   | `LustreSyntaxChecksError of Lib.position * LustreSyntaxChecks.error_kind
   | `LustreTypeCheckerError of Lib.position * LustreTypeChecker.error_kind
   | `LustreUnguardedPreError of Lib.position * LustreAst.expr
   | `LustreParserError of Lib.position * string
+  | `LustreDesugarIfBlocksError of Lib.position * LustreDesugarIfBlocks.error_kind
+  | `LustreDesugarFrameBlocksError of Lib.position * LustreDesugarFrameBlocks.error_kind
 ]
 
 let (let*) = Res.(>>=)
-let (>>=) = Res.(>>=)
 let (>>) = Res.(>>)
 
 exception NoMainNode of string
@@ -131,67 +140,79 @@ let ast_of_channel(in_ch: in_channel) =
 let type_check declarations =
   let tc_res = (
     (* Step 1. Basic syntax checks on declarations  *)
-    LS.syntax_check declarations >>= fun declarations ->
+    let* declarations = LS.syntax_check declarations in
 
     (* Step 2. Split program into top level const and type delcs, and node/contract decls *)
     let (const_type_decls, node_contract_src) = LH.split_program declarations in
 
     (* Step 3. Dependency analysis on the top level declarations.  *)
-    AD.sort_globals const_type_decls >>= fun sorted_const_type_decls ->
-
+    let* sorted_const_type_decls = AD.sort_globals const_type_decls in
+    
     (* Step 4. Type check top level declarations *)
-    TC.type_check_infer_globals TCContext.empty_tc_context sorted_const_type_decls
-      >>= fun ctx ->
+    let* ctx = TC.type_check_infer_globals TCContext.empty_tc_context sorted_const_type_decls in
 
     (* Step 5: Inline type toplevel decls *)
-    IC.inline_constants ctx sorted_const_type_decls
-      >>= fun (inlined_ctx, const_inlined_type_and_consts) ->
-
-    (* Step 6. Dependency analysis on nodes and contracts *)
-    AD.sort_and_check_nodes_contracts node_contract_src
-      >>= fun (sorted_node_contract_decls, toplevel_nodes) ->
-
-    (* Step 7. type check nodes and contracts *)
-    TC.type_check_infer_nodes_and_contracts inlined_ctx sorted_node_contract_decls
-      >>= fun global_ctx ->
-
-    (* Step 8. Inline constants in node equations *)
-    IC.inline_constants global_ctx sorted_node_contract_decls
-      >>= fun (inlined_global_ctx, const_inlined_nodes_and_contracts) ->
-
-    (* Step 9. Infer tighter subrange constraints with abstract interpretation *)
-    let abstract_interp_ctx = LIA.interpret_program inlined_global_ctx const_inlined_nodes_and_contracts in
+    let* (inlined_ctx, const_inlined_type_and_consts) = IC.inline_constants ctx sorted_const_type_decls in
     
-    (* Step 10. Normalize AST: guard pres, abstract to locals where appropriate *)
-    LAN.normalize inlined_global_ctx abstract_interp_ctx const_inlined_nodes_and_contracts
-      >>= fun (normalized_nodes_and_contracts, gids) ->
+    (* Step 6. Desugar nondeterministic choice operators *)
+    let node_contract_src = LDN.desugar_any_ops inlined_ctx node_contract_src in
 
+    (* Step 7. Dependency analysis on nodes and contracts *)
+    let* (sorted_node_contract_decls, toplevel_nodes, node_summary) = AD.sort_and_check_nodes_contracts node_contract_src in
+
+    (* Step 8. type check nodes and contracts *)
+    let* global_ctx = TC.type_check_infer_nodes_and_contracts inlined_ctx sorted_node_contract_decls in
+
+    (* Step 9. Remove multiple assignment from if blocks and frame blocks *)
+    let sorted_node_contract_decls, gids = RMA.remove_mult_assign global_ctx sorted_node_contract_decls in
+
+    (* Step 10. Desugar imperative if block to ITEs *)
+    let* (sorted_node_contract_decls, gids) = (LDI.desugar_if_blocks global_ctx sorted_node_contract_decls gids) in
+
+    (* Step 11. Desugar frame blocks by adding node equations and guarding oracles. *)
+    let* (sorted_node_contract_decls, warnings) = LDF.desugar_frame_blocks sorted_node_contract_decls in 
+
+    (* Step 12. Inline constants in node equations *)
+    let* (inlined_global_ctx, const_inlined_nodes_and_contracts) =
+      IC.inline_constants global_ctx sorted_node_contract_decls
+    in
+
+    (* Step 13. Check that inductive array equations are well-founded *)
+    let* _ = LAD.check_inductive_array_dependencies inlined_global_ctx node_summary const_inlined_nodes_and_contracts in
+
+    (* Step 14. Infer tighter subrange constraints with abstract interpretation *)
+    let* _ = LIA.interpret_global_consts inlined_global_ctx const_inlined_type_and_consts in
+    let abstract_interp_ctx = LIA.interpret_program inlined_global_ctx gids const_inlined_nodes_and_contracts in
+
+    (* Step 15. Normalize AST: guard pres, abstract to locals where appropriate *)
+    let* (normalized_nodes_and_contracts, gids, warnings2) = 
+      LAN.normalize inlined_global_ctx abstract_interp_ctx const_inlined_nodes_and_contracts gids
+    in
+    
+      
     Res.ok (inlined_global_ctx,
       gids,
       const_inlined_type_and_consts @ normalized_nodes_and_contracts,
-      toplevel_nodes)
+      toplevel_nodes,
+      warnings @ warnings2)
     )
   in
   match tc_res with
-  | Ok (c, g, d, toplevel) ->
-    let unguarded_pre_warnings = LAN.get_warnings g in
-    let warnings = List.map (fun (p, e) -> 
-        if Flags.lus_strict () then
-          Error (`LustreUnguardedPreError (p, e))
+  | Error e -> Error e
+  | Ok (c, g, d, toplevel, warnings) -> 
+    let warnings = List.map (fun warning -> 
+        if Flags.lus_strict () then (
+          fail_at_position (LW.warning_position warning) (LW.warning_message warning)
+        )
         else
-          let warn_message = (Format.asprintf
-            "@[<hov 2>Unguarded pre in expression@ %a@]"
-            LA.pp_print_expr e)
-          in
-          warn_at_position p warn_message;
-          Ok ())
-      unguarded_pre_warnings
+          (warn_at_position (LW.warning_position warning) (LW.warning_message warning); Ok ())
+    ) (LW.sort_warnings_by_pos warnings)
     in
     let warning = List.fold_left (>>) (Ok ()) warnings in
     Debug.parse "Type checking done";
     Debug.parse "========\n%a\n==========\n" LA.pp_print_program d;
-    warning >> Ok (c, g, d, toplevel)
-  | Error e -> Error e(* fail_at_position (LE.error_position e) (LE.error_message e) *)
+    warning >> Ok (c, g, d, toplevel, warnings)
+   (*  *)
 
 
 let print_nodes_and_globals nodes globals =
@@ -222,9 +243,9 @@ let print_nodes_and_globals nodes globals =
       globals.LG.state_var_bounds
       [])
   (pp_print_list LustreNode.pp_print_node_debug ";@ ") nodes
-  (pp_print_list LustreNode.pp_print_state_var_instances_debug ";@") nodes
-  (pp_print_list LustreNode.pp_print_state_var_defs_debug ";@") nodes
-  (pp_print_list StateVar.pp_print_state_var_debug ";@")
+  (pp_print_list LustreNode.pp_print_state_var_instances_debug ";@ ") nodes
+  (pp_print_list LustreNode.pp_print_state_var_defs_debug ";@ ") nodes
+  (pp_print_list StateVar.pp_print_state_var_debug ";@ ")
     (nodes |> List.map (fun n -> LustreNode.get_all_state_vars n @ n.oracles)
       |> List.flatten)
 
@@ -235,7 +256,7 @@ let of_channel old_frontend only_parse in_ch =
   let* declarations = ast_of_channel in_ch in
 
   (* Provide lsp info if option is enabled *)
-  if Flags.log_format_json () && Flags.lsp () then
+  if Flags.log_format_json () && Flags.Lsp.lsp () then
     LspInfo.print_ast_info declarations;
 
   if old_frontend then
@@ -271,7 +292,7 @@ let of_channel old_frontend only_parse in_ch =
         in
         Ok (nodes, globals, main_nodes)
       else
-        let* (ctx, gids, decls, toplevel_nodes) = type_check declarations in
+        let* (ctx, gids, decls, toplevel_nodes, _) = type_check declarations in
         let nodes, globals = LNG.compile ctx gids decls in
         let main_nodes = match Flags.lus_main () with
           | Some s -> [LustreIdent.mk_string_ident s]

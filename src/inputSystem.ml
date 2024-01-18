@@ -296,11 +296,10 @@ let interpreter_param (type s) (input_system : s t) =
       let {S.scope} as sub =
         match main_subs with
         | [sub] -> sub
-        | l ->
+        | _ ->
           let msg =
-            let n = List.length l in
             Format.asprintf
-              "interpreter only accepts one main subsystem, but found %d" n
+              "two or more top nodes detected, please select one with --lus_main or a single --%%MAIN annotation"
           in
           failwith msg
       in 
@@ -544,6 +543,36 @@ fun sys vars ->
     (reconstruct_lustre_streams sys vars)
     SVM.empty
 
+
+let call_state_var_to_lustre_reference (type s):
+s t -> StateVar.t list -> string StateVar.StateVarMap.t =
+fun sys vars ->
+SVM.fold
+  (fun sv l acc ->
+    (* If there is more than one alias, the first one is used *)
+    let sv', path = List.hd l in
+    let scope =
+      List.fold_left
+        (fun acc (lid, n, _) ->
+          Format.asprintf "%a[%d]"
+            (LustreIdent.pp_print_ident true) lid n :: acc
+        )
+        []
+        path
+    in
+    match scope with
+    | [] -> acc
+    | _ -> (
+      let var_name = StateVar.name_of_state_var sv' in
+      let full_name =
+        String.concat "." (List.rev (var_name :: scope))
+      in
+      (* Format.printf "%a -> %s@." StateVar.pp_print_state_var sv full_name ; *)
+      SVM.add sv full_name acc
+    )
+  )
+  (reconstruct_lustre_streams sys vars)
+  SVM.empty
 
 let pp_print_term_as_expr
   (type s) (in_sys : s t) sys =

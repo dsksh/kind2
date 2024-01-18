@@ -51,7 +51,10 @@ type ty_set = SI.t
 
 type contract_exports = (ty_store) IMap.t
 (** Mapping for all the exports of the contract, modes and contract ghost const and vars *)
-   
+
+type param_store = (HString.t * bool) list IMap.t
+(** A store of parameter names and flags indicating if the argument is constant *)
+
 type tc_context
 
 val empty_tc_context: tc_context
@@ -100,6 +103,10 @@ val lookup_contract_ty: tc_context -> LA.ident -> tc_type option
 val lookup_node_ty: tc_context -> LA.ident -> tc_type option
 (** Lookup a node type *)
 
+val lookup_node_param_attr: tc_context -> LA.ident -> (HString.t * bool) list option
+
+val lookup_node_param_ids: tc_context -> LA.ident -> HString.t list option
+
 val lookup_const: tc_context -> LA.ident -> (LA.expr * tc_type option) option
 (** Lookup a constant identifier *)
 
@@ -114,7 +121,10 @@ val add_ty: tc_context -> LA.ident -> tc_type -> tc_context
 
 val add_ty_node: tc_context -> LA.ident -> tc_type -> tc_context
 (** Add node/function type binding into the typing context *)
-  
+
+val add_node_param_attr: tc_context -> LA.ident -> LA.const_clocked_typed_decl list -> tc_context
+(** Track whether node parameters are constant or not *)
+
 val add_ty_contract: tc_context -> LA.ident -> tc_type -> tc_context
 (** Add the type of the contract *)
                   
@@ -191,3 +201,11 @@ val pp_print_enum_variants: Format.formatter -> enum_variants -> unit
 
 val pp_print_tc_context: Format.formatter -> tc_context -> unit
 (** Pretty print the complete type checker context*)
+
+(** {1 Helper functions that uses context }  *)
+
+val arity_of_expr: tc_context -> LA.expr -> int
+(** Return the arity of a Lustre expression given a context *)
+
+val traverse_group_expr_list: (int -> LA.expr -> 'a) -> tc_context -> int -> LA.expr list -> 'a
+(** Traverse a group expr list *)

@@ -71,10 +71,6 @@ type binary_operator =
 
 type ternary_operator =
   | Ite
-  | With (* With operator for recursive definitions *)
-
-type n_arity_operator =
-  | OneHot
 
 type comparison_operator =
   | Eq | Neq  | Lte  | Lt  | Gte | Gt
@@ -105,34 +101,29 @@ type expr =
   | UnaryOp of position * unary_operator * expr
   | BinaryOp of position * binary_operator * expr * expr
   | TernaryOp of position * ternary_operator * expr * expr * expr
-  | NArityOp of position * n_arity_operator * expr list
   | ConvOp of position * conversion_operator * expr
   | CompOp of position * comparison_operator * expr * expr
+  | AnyOp of position * typed_ident * expr * expr option
   (* Structured expressions *)
   | RecordExpr of position * ident * (ident * expr) list
   | GroupExpr of position * group_expr * expr list
   (* Update of structured expressions *)
   | StructUpdate of position * expr * label_or_index list * expr
-  | ArrayConstr of position * expr * expr 
-  | ArraySlice of position * expr * (expr * expr) 
+  | ArrayConstr of position * expr * expr  
   | ArrayIndex of position * expr * expr
-  | ArrayConcat of position * expr * expr
   (* Quantified expressions *)
   | Quantifier of position * quantifier * typed_ident list * expr
   (* Clock operators *)
   | When of position * expr * clock_expr
-  | Current of position * expr
   | Condact of position * expr * expr * ident * expr list * expr list
   | Activate of position * ident * expr * expr * expr list
   | Merge of position * ident * (ident * expr) list
   | RestartEvery of position * ident * expr list * expr
   (* Temporal operators *)
   | Pre of position * expr
-  | Fby of position * expr * int * expr
   | Arrow of position * expr * expr
   (* Node calls *)
   | Call of position * ident * expr list
-  | CallParam of position * ident * lustre_type list * expr list
 
 (** A Lustre type *)
 and lustre_type =
@@ -147,7 +138,7 @@ and lustre_type =
   | Int16 of position
   | Int32 of position
   | Int64 of position
-  | IntRange of position * expr * expr
+  | IntRange of position * expr option * expr option
   | Real of position
   | UserType of position * ident
   | AbstractType of position * ident
@@ -218,22 +209,39 @@ type struct_item =
 type eq_lhs =
   | StructDef of position * struct_item list
 
+(* The left-hand side of an equation in a contract *)
+type contract_eq_lhs =
+  | GhostVarDec of position * typed_ident list
+
 (* An equation or assertion in the node body *)
 type node_equation =
   | Assert of position * expr
   | Equation of position * eq_lhs * expr
 
+type prop_bound =
+  | From of int
+  | Within of int
+  | At of int
+  | FromWithin of int * int
+
+type prop_kind =
+  | Invariant
+  | Reachable of prop_bound option
+  | Provided of expr
+
 (* An item in a node declaration *)
 type node_item =
   | Body of node_equation
-  | AnnotMain of bool
-  | AnnotProperty of position * HString.t option * expr
+  | IfBlock of position * expr * node_item list * node_item list
+  | FrameBlock of position * (position * ident) list * node_equation list * node_item list 
+  | AnnotMain of position * bool
+  | AnnotProperty of position * HString.t option * expr * prop_kind
 
 (* A contract ghost constant. *)
 type contract_ghost_const = const_decl
 
-(* A contract ghost variable. *)
-type contract_ghost_var = const_decl
+(* Multiple contract ghost variables declared simultaneously. *)
+type contract_ghost_vars = position * contract_eq_lhs * expr
 
 (* A contract assume. *)
 type contract_assume = position * HString.t option * bool (* soft *) * expr
@@ -260,7 +268,7 @@ type contract_assump_vars = position * (position * HString.t) list
 (* Equations that can appear in a contract node. *)
 type contract_node_equation =
   | GhostConst of contract_ghost_const
-  | GhostVar of contract_ghost_var
+  | GhostVars of contract_ghost_vars
   | Assume of contract_assume
   | Guarantee of contract_guarantee
   | Mode of contract_mode
@@ -382,15 +390,6 @@ let rec pp_print_expr ppf =
     | e :: tl -> Format.fprintf ppf "%a,@ %a" pl [e] pl tl
   in
 
-  (* Pretty-print a variadic prefix operator *)
-  let pnp p s l = 
-    Format.fprintf ppf
-      "@[<hv 2>%a%s@,@[<hv 1>(%a)@]@]" 
-      ppos p 
-      s
-      pl l
-  in
-
   function
     
     | Ident (p, id) -> Format.fprintf ppf "%a%a" ppos p pp_print_ident id
@@ -423,14 +422,6 @@ let rec pp_print_expr ppf =
         pp_print_expr e1 
         pp_print_expr e2
 
-    | ArraySlice (p, e, l) -> 
-
-      Format.fprintf ppf 
-        "%a@[<hv 1>%a@[<hv 1>[%a]@]@]" 
-        ppos p 
-        pp_print_expr e
-        pp_print_array_slice l 
-
     | ArrayIndex (p, e, l) -> 
 
       Format.fprintf ppf 
@@ -438,14 +429,6 @@ let rec pp_print_expr ppf =
         ppos p 
         pp_print_expr e
         pp_print_expr l 
-
-    | ArrayConcat (p, e1, e2) -> 
-
-      Format.fprintf ppf 
-        "%a@[<hv 1>%a|%a@]" 
-        ppos p 
-        pp_print_expr e1
-        pp_print_expr e2 
 
     | RecordProject (p, e, f) -> 
 
@@ -488,7 +471,6 @@ let rec pp_print_expr ppf =
     | BinaryOp (p, Or, e1, e2) -> p2 p "or" e1 e2
     | BinaryOp (p, Xor, e1, e2) -> p2 p "xor" e1 e2
     | BinaryOp (p, Impl, e1, e2) -> p2 p "=>" e1 e2
-    | NArityOp (p, OneHot, e) -> pnp p "#" e
     
     | Quantifier (_, Forall, vars, e) -> 
       Format.fprintf ppf "@[<hv 2>forall@ @[<hv 1>(%a)@]@ %a@]" 
@@ -514,7 +496,6 @@ let rec pp_print_expr ppf =
     | BinaryOp (p, BVShiftR, e1, e2) -> p2 p "shr" e1 e2
 
     | TernaryOp (p, Ite, e1, e2, e3) -> p3 p "if" "then" "else" e1 e2 e3
-    | TernaryOp (p, With, e1, e2, e3) -> p3 p "with" "then" "else" e1 e2 e3
 
     | CompOp (p, Eq, e1, e2) -> p2 p "=" e1 e2
     | CompOp (p, Neq, e1, e2) -> p2 p "<>" e1 e2
@@ -528,12 +509,6 @@ let rec pp_print_expr ppf =
         ppos p
         pp_print_expr e1
         pp_print_clock_expr e2
-
-    | Current (p, e) ->
-      Format.fprintf ppf "@[<hv 2>%a%s(%a)@]" 
-      ppos p 
-      "current"
-      pp_print_expr e
 
     | Condact (p, e1, er, n, e2, e3) -> 
   
@@ -573,14 +548,6 @@ let rec pp_print_expr ppf =
         (pp_print_list pp_print_expr ",@ ") l 
 
     | Pre (p, e) -> p1 p "pre" e
-    | Fby (p, e1, i, e2) -> 
-
-      Format.fprintf ppf 
-        "%afby(p, %a,@ %d,@ %a)" 
-        ppos p 
-        pp_print_expr e1 
-        i 
-        pp_print_expr e2
 
     | Arrow (p, e1, e2) -> p2 p "->" e1 e2
 
@@ -591,16 +558,23 @@ let rec pp_print_expr ppf =
         ppos p
         pp_print_ident id
         (pp_print_list pp_print_expr ",@ ") l
+    
+    | AnyOp (p, id, e1, Some e2) ->
 
-    | CallParam (p, id, t, l) -> 
+      Format.fprintf ppf
+      "%aany { %a | %a assuming %a }"
+      ppos p
+      pp_print_typed_ident id
+      pp_print_expr e1
+      pp_print_expr e2
 
-      Format.fprintf ppf 
-        "%a%a<<%a>>(%a)" 
-        ppos p
-        pp_print_ident id
-        (pp_print_list pp_print_lustre_type "@ ") t
-        (pp_print_list pp_print_expr ",@ ") l
-        
+    | AnyOp (p, id, e, None) ->
+
+      Format.fprintf ppf
+      "%aany { %a | %a }"
+      ppos p
+      pp_print_typed_ident id
+      pp_print_expr e
 
 (* Pretty-print an array slice *)
 and pp_print_array_slice ppf (l, u) =
@@ -628,10 +602,15 @@ and pp_print_lustre_type ppf = function
   | Int32 _ -> Format.fprintf ppf "int32"
   | Int64 _ -> Format.fprintf ppf "int64"
   | IntRange (_, l, u) -> 
+    let pp_print_opt ppf expr_opt = (match expr_opt with
+      | Some expr -> pp_print_expr ppf expr
+      | None -> Format.fprintf ppf "%s" unbounded_limit_string
+    )
+    in
     Format.fprintf ppf 
       "subrange [%a,%a] of int" 
-      pp_print_expr l
-      pp_print_expr u
+      pp_print_opt l
+      pp_print_opt u
   | Real _ -> Format.fprintf ppf "real"
   | UserType (_, s) -> 
     Format.fprintf ppf "%a" pp_print_ident s
@@ -858,14 +837,26 @@ let rec pp_print_struct_item ppf = function
 
 
 let pp_print_eq_lhs ppf = function
-
   | StructDef (_, [l]) ->
     pp_print_struct_item ppf l
       
   | StructDef (_, l) ->
     Format.fprintf ppf "(%a)"
       (pp_print_list pp_print_struct_item ",") l
+
+let pp_print_contract_eq_lhs ppf = function
+  | GhostVarDec (_, [(_, l, _)]) ->
+    pp_print_ident ppf l
   
+  | GhostVarDec (_, l) ->
+    Format.fprintf ppf "(%a)"
+      (pp_print_list pp_print_ident ", ") (List.map (fun (_, i, _) -> i) l)
+
+let pp_print_typed_contract_eq_lhs ppf = function
+  | GhostVarDec (_, l) ->
+    Format.fprintf ppf "%a"
+      (pp_print_list pp_print_typed_ident ", ") l
+
 
 let rec pp_print_node_body ppf = function
 
@@ -886,17 +877,99 @@ and pp_print_node_item ppf = function
   
   | Body b -> pp_print_node_body ppf b
 
-  | AnnotMain true -> Format.fprintf ppf "--%%MAIN;"
+  | IfBlock (_, e, l1, []) -> 
+    Format.fprintf ppf "if %a then %a fi"  
+      pp_print_expr e 
+      (pp_print_list pp_print_node_item " ") l1
 
-  | AnnotMain false -> Format.fprintf ppf "--!MAIN : false;"
+  | IfBlock (_, e, l1, l2) -> 
+    Format.fprintf ppf "if %a then %a else  %a fi"  
+      pp_print_expr e 
+      (pp_print_list pp_print_node_item " ") l1
+      (pp_print_list pp_print_node_item " ") l2
 
-  | AnnotProperty (_, None, e) ->
+  | FrameBlock (_, vars, nes, nis) -> Format.fprintf ppf "frame (%a) %a let %a tel" 
+    (pp_print_list pp_print_ident ", ") (List.map snd vars)
+    (pp_print_list pp_print_node_body " ") nes
+    (pp_print_list pp_print_node_item " ") nis
+
+  | AnnotMain (_, true) -> Format.fprintf ppf "--%%MAIN;"
+
+  | AnnotMain (_, false) -> Format.fprintf ppf "--!MAIN : false;"
+
+  | AnnotProperty (_, None, e, Invariant) ->
     Format.fprintf ppf "--%%PROPERTY %a;" pp_print_expr e 
 
-  | AnnotProperty (_, Some name, e) ->
+  | AnnotProperty (_, None, e, Reachable Some (From b)) ->
+    Format.fprintf ppf "--%%PROPERTY reachable %a from %d;" 
+    pp_print_expr e 
+    b
+
+  | AnnotProperty (_, None, e, Reachable Some (Within b)) ->
+    Format.fprintf ppf "--%%PROPERTY reachable %a within %d;" 
+    pp_print_expr e 
+    b
+
+  | AnnotProperty (_, None, e, Reachable Some (At b)) ->
+    Format.fprintf ppf "--%%PROPERTY reachable %a at %d;" 
+    pp_print_expr e
+    b
+
+  | AnnotProperty (_, None, e, Reachable Some (FromWithin (l, u))) ->
+    Format.fprintf ppf "--%%PROPERTY reachable %a from %d within %d;" 
+    pp_print_expr e
+    l
+    u
+
+  | AnnotProperty (_, None, e, Reachable None) ->
+    Format.fprintf ppf "--%%PROPERTY reachable %a;" 
+    pp_print_expr e
+
+  | AnnotProperty (_, None, e1, Provided e2) ->
+    Format.fprintf ppf "--%%PROPERTY %a provided %a;" 
+    pp_print_expr e1
+    pp_print_expr e2
+
+  | AnnotProperty (_, Some name, e, Invariant) ->
     Format.fprintf ppf "--%%PROPERTY \"%a\" %a;"
       HString.pp_print_hstring name
       pp_print_expr e 
+
+  | AnnotProperty (_, Some name, e, Reachable Some (From b)) ->
+    Format.fprintf ppf "--%%PROPERTY reachable \"%a\" %a from %d;"
+      HString.pp_print_hstring name
+      pp_print_expr e 
+      b
+
+  | AnnotProperty (_, Some name, e, Reachable Some (Within b)) ->
+    Format.fprintf ppf "--%%PROPERTY reachable \"%a\" %a within %d;"
+      HString.pp_print_hstring name
+      pp_print_expr e 
+      b
+
+  | AnnotProperty (_, Some name, e, Reachable Some (At b)) ->
+    Format.fprintf ppf "--%%PROPERTY reachable \"%a\" %a at %d;"
+      HString.pp_print_hstring name
+      pp_print_expr e 
+      b
+
+  | AnnotProperty (_, Some name, e, Reachable Some (FromWithin (l, u))) ->
+    Format.fprintf ppf "--%%PROPERTY reachable \"%a\" %a from %d within %d;"
+      HString.pp_print_hstring name
+      pp_print_expr e 
+      l
+      u
+
+  | AnnotProperty (_, Some name, e, Reachable None ) ->
+    Format.fprintf ppf "--%%PROPERTY reachable \"%a\" %a;"
+      HString.pp_print_hstring name
+      pp_print_expr e 
+
+  | AnnotProperty (_, Some name, e1, Provided e2 ) ->
+    Format.fprintf ppf "--%%PROPERTY \"%a\" %a provided %a;"
+      HString.pp_print_hstring name
+      pp_print_expr e1 
+      pp_print_expr e2
 
 
 let pp_print_contract_ghost_const ppf = function 
@@ -923,30 +996,12 @@ let pp_print_contract_ghost_const ppf = function
       pp_print_lustre_type t
       pp_print_expr e
 
-    
-let pp_print_contract_ghost_var ppf = function 
 
-  | FreeConst (_, s, t) -> 
-
-    Format.fprintf ppf 
-      "@[<hv 3>var %a:@ %a;@]" 
-      pp_print_ident s 
-      pp_print_lustre_type t
-
-  | UntypedConst (_, s, e) -> 
-
-    Format.fprintf ppf 
-      "@[<hv 3>var %a =@ %a;@]" 
-      pp_print_ident s 
-      pp_print_expr e
-
-  | TypedConst (_, s, e, t) -> 
-
-    Format.fprintf ppf 
-      "@[<hv 3>var %a:@ %a =@ %a;@]" 
-      pp_print_ident s 
-      pp_print_lustre_type t
-      pp_print_expr e
+let pp_print_contract_ghost_vars ppf = fun (_, lhs, e) ->
+  Format.fprintf ppf 
+  "@[<hv 3>var %a =@ %a;@]" 
+  pp_print_typed_contract_eq_lhs lhs
+  pp_print_expr e
 
     
 let pp_print_contract_assume ppf (_, n, s, e) =
@@ -1017,7 +1072,7 @@ let pp_print_contract_assump_vars fmt (_, vars) =
 
 let pp_print_contract_item fmt = function
   | GhostConst c -> pp_print_contract_ghost_const fmt c
-  | GhostVar v -> pp_print_contract_ghost_var fmt v
+  | GhostVars vs -> pp_print_contract_ghost_vars fmt vs
   | Assume a -> pp_print_contract_assume fmt a
   | Guarantee g -> pp_print_contract_guarantee fmt g
   | Mode m -> pp_print_contract_mode fmt m

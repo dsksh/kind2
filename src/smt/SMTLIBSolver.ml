@@ -19,6 +19,8 @@
 open Lib
 open SolverResponse
 
+let trace_suffix = ref ""
+
 (* ********************************************************************* *)
 (* Types                                                                 *)
 (* ********************************************************************* *)
@@ -146,7 +148,7 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
        
        get_value_response_of_sexpr' accum tl
 
-    (* Hack for CVC4's (- 1).0 expressions *)
+    (* Hack for cvc5's (- 1).0 expressions *)
     | HStringSExpr.List [ e; v; HStringSExpr.Atom d ] :: tl 
       when d == HString.mk_hstring ".0" ->
 
@@ -679,17 +681,18 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
     (* Send command to the solver without timeout *)
     execute_get_model_command solver cmd 0
 
-
   (* Get an unsatisfiable core *)
-  let get_unsat_core solver = 
+  let get_unsat_core solver =
+    let cmd = Format.sprintf "@[<hv 1>(get-unsat-core)@]" in
+
+    (* Send command to the solver without timeout *)
+    execute_get_unsat_core_command solver cmd 0
+
+  (* Get an unsatisfiable subset of assumptions *)
+  let get_unsat_assumptions solver =
 
     (* The command to send to the solver *)
     let cmd =
-      (* Every current use of get_unsat_core really means
-         get_unsat_assumptions. Thus, the textual command
-         have been changed here.
-         TODO: change the name of all related functions.
-      *)
       if Flags.Smt.check_sat_assume () then
         Format.sprintf "@[<hv 1>(get-unsat-assumptions)@]"
       else
@@ -750,9 +753,10 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
       let trace_filename = 
         Filename.concat
           tdir
-          (Format.sprintf "%s.%s.%d.%s" 
+          (Format.sprintf "%s.%s.%s%d.%s" 
              (Filename.basename (Flags.input_file ()))
              (short_name_of_kind_module (KEvent.get_module ()))
+             !trace_suffix
              id
              trace_extension
           )
@@ -899,9 +903,10 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
   (* Create an instance of the solver *)
   let create_instance
       ?(timeout=0)
-      ?(produce_assignments=false)
+      ?(produce_models=false)
       ?(produce_proofs=false)
-      ?(produce_cores=false)
+      ?(produce_unsat_cores=false)
+      ?(produce_unsat_assumptions=false)
       ?(minimize_cores=false)
       ?(produce_interpolants=false)
       logic
@@ -912,9 +917,10 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
       Driver.cmd_line
         logic
         timeout
-        produce_assignments
+        produce_models
         produce_proofs
-        produce_cores
+        produce_unsat_cores
+        produce_unsat_assumptions
         minimize_cores
         produce_interpolants
     in
@@ -1002,33 +1008,21 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
     let headers =
       "(set-option :print-success true)" ::
       (headers minimize_cores) @
-      (if produce_assignments then
-        (*["(set-option :produce-assignments true)"] else []) @*)
-        (* The command get-model is used instead of get-assignment,
-          thus we should use the option produce-models instead of produce-assignments *)
+      (if produce_models then
         ["(set-option :produce-models true)"] else []) @
-      (if produce_cores then
-         (* Every current use of get_unsat_core really means get_unsat_assumptions.
-            TODO: replace variable name with a less misleading one *)
-         (if Flags.Smt.check_sat_assume () then
-            ["(set-option :produce-unsat-assumptions true)"]
-          else
-            ["(set-option :produce-unsat-cores true)"]
-         )
+      (if produce_unsat_cores ||
+          (produce_unsat_assumptions && not (Flags.Smt.check_sat_assume ()))
+       then ["(set-option :produce-unsat-cores true)"]
+       else []) @
+      (if produce_unsat_assumptions && Flags.Smt.check_sat_assume ()
+       then ["(set-option :produce-unsat-assumptions true)"]
+       else []) @
+      (if produce_interpolants then
+        [Format.sprintf "(set-option :produce-interpolants %B)" produce_interpolants]
        else []) @
       header_logic @
       header_farray @
       (if define_bv2int then header_bv2int else [])
-    in
-    
-    (* Add interpolation option only if true *)
-    let headers = 
-      if produce_interpolants then
-        headers @ 
-        [Format.sprintf "(set-option :produce-interpolants %B)" produce_interpolants]
-      else
-        
-        headers 
     in
     
     (* Print specific headers specifications *)
@@ -1155,10 +1149,12 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
     
     let solver = create_instance
         ~timeout:P.timeout
-        ~produce_assignments:P.produce_assignments
-        ~produce_cores:P.produce_cores
+        ~produce_models:P.produce_models
+        ~produce_unsat_cores:P.produce_unsat_cores
+        ~produce_unsat_assumptions:P.produce_unsat_assumptions
         ~minimize_cores:P.minimize_cores
         ~produce_proofs:P.produce_proofs
+        ~produce_interpolants:P.produce_interpolants
         P.logic P.id
 
     let delete_instance () = delete_instance solver
@@ -1179,6 +1175,7 @@ module Make (Driver : SMTLIBSolverDriver) : SolverSig.S = struct
     let get_value = get_value solver
     let get_model = get_model solver
     let get_unsat_core () = get_unsat_core solver
+    let get_unsat_assumptions () = get_unsat_assumptions solver
 
     let execute_custom_command = execute_custom_command solver
     let execute_custom_check_sat_command cmd = execute_custom_check_sat_command cmd solver

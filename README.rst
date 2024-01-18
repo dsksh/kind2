@@ -34,7 +34,7 @@ external tools, Kind 2 can output its results in JSON and XML formats
 
 By default Kind 2 runs a process for bounded model checking (BMC), two processes
 for k-induction (one for a fixed value of k=2, and other for increasing values of k),
-several processes for invariant generation, and a process for IC3
+several processes for invariant generation, a process for IC3QE, and several processes for IC3IA
 in parallel on all properties simultaneously. It incrementally outputs
 counterexamples to properties as well as properties proved invariant.
 
@@ -43,11 +43,11 @@ The following command-line options control its operation
 See `Techniques <https://kind.cs.uiowa.edu/kind2_user_doc/1_techniques/1_techniques.html>`_ for configuration examples and
 more details on each technique.
 
-``--enable {BMC|IND|IND2|IC3|INVGEN|INVGENOS|...}`` Select model checking engines
+``--enable {BMC|IND|IND2|IC3QE|IC3IA|INVGEN|INVGENOS|...}`` Select model checking engines
 
-By default, all four model checking engines are run in parallel.
-Give any combination of ``--enable BMC``\ , ``--enable IND``, ``--enable IND2`` and
-``--enable IC3`` to select which engines to run. The option ``--enable BMC`` alone
+By default, all five model checking engines are run in parallel.
+Give any combination of ``--enable BMC``, ``--enable IND``, ``--enable IND2``,
+``--enable IC3QE`` and ``--enable IC3IA`` to select which engines to run. The option ``--enable BMC`` alone
 will not be able to prove properties valid, choosing ``--enable IND`` and
 ``--enable IND2`` only (or either of the two alone) will not produce any results.
 Any other combination is sound
@@ -57,13 +57,15 @@ given enough time and resources).
 
 ``--timeout <int>`` (default ``0`` = none) -- Run for the given number of seconds of wall clock time
 
-``--smt_solver {Boolector|CVC4|MathSAT|Yices|Yices2|Z3}`` (default ``Z3``\ ) -- Select SMT solver
+``--smt_solver {Bitwuzla|cvc5|MathSAT|SMTInterpol|Yices|Yices2|Z3}`` (default ``Z3``\ ) -- Select SMT solver
 
-``--boolector_bin <file>`` -- Executable for Boolector
+``--bitwuzla_bin <file>`` -- Executable for Bitwuzla
 
-``--cvc4_bin <file>`` -- Executable for CVC4
+``--cvc5_bin <file>`` -- Executable for cvc5
 
 ``--mathsat_bin <file>`` -- Executable for MathSAT 5
+
+``--smtinterpol_jar <file>`` -- JAR of SMTInterpol
 
 ``--yices_bin <file>`` -- Executable for Yices 1 (native input)
 
@@ -98,17 +100,23 @@ To run Kind 2 the following software must be installed on your computer:
 * Linux or macOS, and
 * a supported SMT solver
 
-  * `Boolector <https://boolector.github.io/>`_ (for inputs with only machine integers),
-  * `CVC4 <http://cvc4.cs.stanford.edu/>`_\ ,
+  * `Bitwuzla <https://bitwuzla.github.io/>`_ (for inputs with only machine integers),
+  * `cvc5 <https://cvc5.github.io/>`_\ ,
   * `MathSAT 5 <http://mathsat.fbk.eu/index.html>`_\ ,
+  * `SMTInterpol <https://ultimate.informatik.uni-freiburg.de/smtinterpol/>`_\ ,
   * `Yices 2 <http://yices.csl.sri.com/>`_\ ,
-  * `Yices 1 <http://yices.csl.sri.com/old/download-yices1-full.shtml>`_\ , or
+  * `Yices 1 <https://yices.csl.sri.com/old/download-yices1.html>`_\ , or
   * `Z3 <https://github.com/Z3Prover/z3>`_
 
-Z3 is the presently recommended SMT solver and the default option. For problems with
-only machine integers we recommend to use Boolector in combination with Z3:
-select Boolector as the main solver (``--smt_solver Boolector``) but
-make sure the Z3 binary is also accessible to Kind 2.
+Z3 is the presently recommended SMT solver and the default option.
+For best results, we recommend using a combination of several solvers.
+For systems with integer and real variables, we recommend using Z3 as
+the main solver (``--smt_solver Z3``) and MathSAT as
+the interpolating solver (``--smt_itp_solver MathSAT``).
+For systems with only machine integers, we recommend using Bitwuzla as
+the main solver (``--smt_solver Bitwuzla``), MathSAT as
+the interpolating solver (``--smt_itp_solver MathSAT``), and
+Z3 for performing quantifier elimination (``--smt_qe_solver Z3``).
 
 
 VS Code Extension
@@ -195,7 +203,7 @@ free to call it whatever you want.
 
 Note that building your own local Kind 2 image **does require access to the
 Internet**. This is because of the packages the build process needs to
-retrieve, as well as for downloading the z3 and cvc4 solvers.
+retrieve, as well as for downloading the z3 and cvc5 solvers.
 
 Building and installing
 -----------------------
@@ -351,9 +359,9 @@ For HTML documentation, you additionally need:
 
 For PDF documentation, you additionally need:
 
-* `latexmk <https://packages.ubuntu.com/xenial/latexmk>`_
-* `XeTeX <https://packages.debian.org/sid/texlive-xetex>`_
-* `lmodern <https://packages.debian.org/sid/lmodern>`_
+* `latexmk <https://personal.psu.edu/~jcc8/software/latexmk/>`_
+* `XeTeX <https://xetex.sourceforge.net>`_
+* `lmodern <https://www.gust.org.pl/projects/e-foundry/latin-modern>`_
 
 If you're on Debian/Ubuntu, assuming you have Python 3 installed,
 you can run the following:

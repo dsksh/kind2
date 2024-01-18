@@ -179,7 +179,7 @@ type t = {
   asserts : (position * StateVar.t) list;
 
   (* Proof obligations for node *)
-  props : (StateVar.t * string * Property.prop_source) list;
+  props : (StateVar.t * string * Property.prop_source * Property.prop_kind) list;
 
   (* Contract. *)
   contract : contract option ;
@@ -477,18 +477,83 @@ let pp_print_assert safe ppf (_,sv) =
 
 
 (* Pretty-print a property *)
-let pp_print_prop safe ppf (sv, n, _) = 
-  
-  let sv_string = 
-    Format.asprintf "%a" (E.pp_print_lustre_var safe) sv 
-  in
+let pp_print_prop safe ppf (sv, n, _, k) = 
+  match k with
+    | Property.Invariant -> 
+      let sv_string = 
+        Format.asprintf "%a" (E.pp_print_lustre_var safe) sv 
+      in
 
-  Format.fprintf ppf
-    "@[<hv 2>--%%PROPERTY %s;%t@]"
-    sv_string
-    (fun ppf -> 
-       if sv_string <> n then
-         Format.fprintf ppf " -- was: %s" n)
+      Format.fprintf ppf
+        "@[<hv 2>--%%PROPERTY %s;%t@]"
+        sv_string
+        (fun ppf -> 
+          if sv_string <> n then
+            Format.fprintf ppf " -- was: %s" n)
+    | Property.Reachable Some (From ts) -> 
+      let sv_string = 
+        Format.asprintf "%a" (E.pp_print_lustre_var safe) sv 
+      in
+
+      Format.fprintf ppf
+        "@[<hv 2>--%%PROPERTY reachable %s from %d;%t@]"
+        sv_string
+        ts
+        (fun ppf -> 
+          if sv_string <> n then
+            Format.fprintf ppf " -- was: %s" n)
+
+    | Property.Reachable Some (Within ts) -> 
+      let sv_string = 
+        Format.asprintf "%a" (E.pp_print_lustre_var safe) sv 
+      in
+
+      Format.fprintf ppf
+        "@[<hv 2>--%%PROPERTY reachable %s within %d;%t@]"
+        sv_string
+        ts
+        (fun ppf -> 
+          if sv_string <> n then
+            Format.fprintf ppf " -- was: %s" n)
+
+    | Property.Reachable Some (At ts) -> 
+      let sv_string = 
+        Format.asprintf "%a" (E.pp_print_lustre_var safe) sv 
+      in
+
+      Format.fprintf ppf
+        "@[<hv 2>--%%PROPERTY reachable %s at %d;%t@]"
+        sv_string
+        ts
+        (fun ppf -> 
+          if sv_string <> n then
+            Format.fprintf ppf " -- was: %s" n)
+
+    | Property.Reachable Some (FromWithin (ts1, ts2)) -> 
+      let sv_string = 
+        Format.asprintf "%a" (E.pp_print_lustre_var safe) sv 
+      in
+
+      Format.fprintf ppf
+        "@[<hv 2>--%%PROPERTY reachable %s from %d within %d;%t@]"
+        sv_string
+        ts1
+        ts2
+        (fun ppf -> 
+          if sv_string <> n then
+            Format.fprintf ppf " -- was: %s" n)       
+
+    | Property.Reachable None -> 
+      let sv_string = 
+        Format.asprintf "%a" (E.pp_print_lustre_var safe) sv 
+      in
+
+      Format.fprintf ppf
+        "@[<hv 2>--%%PROPERTY reachable %s;%t@]"
+        sv_string
+        (fun ppf -> 
+          if sv_string <> n then
+            Format.fprintf ppf " -- was: %s" n)
 
 
 let pp_print_node_signature fmt { inputs ; outputs } =
@@ -679,13 +744,59 @@ let pp_print_node_debug ppf
 
   let pp_print_equation = pp_print_node_equation false in
 
-  let pp_print_prop ppf (state_var, name, source) = 
-    Format.fprintf
-      ppf
-      "%a (%s, %a)"
-      StateVar.pp_print_state_var state_var
-      name
-      Property.pp_print_prop_source source
+  let pp_print_prop ppf (state_var, name, source, kind) = 
+    match kind with
+    | Property.Invariant ->
+      Format.fprintf
+        ppf
+        "%a (%s, %a)"
+        StateVar.pp_print_state_var state_var
+        name
+        Property.pp_print_prop_source source
+    | Property.Reachable Some (From ts) ->
+      Format.fprintf
+        ppf
+        "%a (reachable %s from %d, %a)"
+        StateVar.pp_print_state_var state_var
+        name
+        ts
+        Property.pp_print_prop_source source
+
+    | Property.Reachable Some (Within ts) ->
+      Format.fprintf
+        ppf
+        "%a (reachable %s within %d, %a)"
+        StateVar.pp_print_state_var state_var
+        name
+        ts
+        Property.pp_print_prop_source source
+
+    | Property.Reachable Some (At ts) ->
+      Format.fprintf
+        ppf
+        "%a (reachable %s at %d, %a)"
+        StateVar.pp_print_state_var state_var
+        name
+        ts
+        Property.pp_print_prop_source source
+
+    | Property.Reachable Some (FromWithin (ts1, ts2)) ->
+      Format.fprintf
+        ppf
+        "%a (reachable %s from %d within %d, %a)"
+        StateVar.pp_print_state_var state_var
+        name
+        ts1
+        ts2
+        Property.pp_print_prop_source source
+
+    | Property.Reachable None ->
+      Format.fprintf
+        ppf
+        "%a (reachable %s, %a)"
+        StateVar.pp_print_state_var state_var
+        name
+        Property.pp_print_prop_source source
   in
 
   let pp_print_state_var_source ppf = 
@@ -759,9 +870,9 @@ let pp_print_node_debug ppf
     is_function
     (pp_print_list pp_print_state_var_source ";@ ")
       (SVM.bindings state_var_source_map)
-    (pp_print_list pp_print_oracle_state_var_map ";@")
+    (pp_print_list pp_print_oracle_state_var_map ";@ ")
       (SVT.fold (fun k v acc -> (k, v) :: acc) oracle_state_var_map [])
-    (pp_print_list pp_print_state_var_expr_map ";@")
+    (pp_print_list pp_print_state_var_expr_map ";@ ")
       (SVT.fold (fun k v acc -> (k, v) :: acc) state_var_expr_map [])
 
 
@@ -856,6 +967,15 @@ let node_call_of_svar { calls } svar =
     | [] -> None
   in
   loop calls
+
+let node_call_svars { calls } =
+  List.fold_left
+    (fun acc { call_outputs } ->
+      D.bindings call_outputs
+      |> List.map snd
+      |> SVS.of_list |> SVS.union acc)
+    SVS.empty
+    calls
 
 (* Return the scope of the name of the node *)
 let scope_of_node { name } = name |> I.to_scope
@@ -1186,9 +1306,8 @@ let stateful_vars_of_expr { E.expr_step } =
 
       (* Previous state variables have negative offset *)
       | Term.T.Var v when 
-          Var.is_state_var_instance v && 
-          (Numeral.(Var.offset_of_state_var_instance v < E.cur_offset)
-           || Flags.Certif.certif ()) -> 
+          Var.is_state_var_instance v &&
+          Numeral.(Var.offset_of_state_var_instance v < E.cur_offset) ->
 
         (function 
           | [] -> 
@@ -1217,8 +1336,6 @@ let stateful_vars_of_expr { E.expr_step } =
     (expr_step :> Term.t)
 
 
-let stateful_vars_of_prop (state_var, _, _) = SVS.singleton state_var
-
 (* Return all stateful variables from expressions in a node *)
 let stateful_vars_of_node
     { inputs; 
@@ -1244,17 +1361,21 @@ let stateful_vars_of_node
   in
 
   (* Add stateful variables from properties *)
-  let stateful_vars =
-    List.fold_left
-      (fun accum p -> SVS.union accum (stateful_vars_of_prop p))
+  let stateful_vars = 
+    add_to_svs
       stateful_vars
-      props
+      (List.map (fun (sv, _, _, _) -> sv) props) 
   in
 
-  (* Add stateful variables from global and mode contracts *)
+  (* Add stateful variables from contracts *)
   let stateful_vars = match contract with
     | None -> stateful_vars
-    | Some contract -> C.svars_of contract |> SVS.union stateful_vars 
+    | Some contract ->
+      (* Sofar variable should only be added if the corresponding equation is present,
+         which is detected below since its definition refers to itself:
+         sofar = [...] and pre sofar
+      *)
+      C.svars_of ~with_sofar_var:false contract |> SVS.union stateful_vars
   in
 
   (* Add stateful variables from equations *)
@@ -1289,13 +1410,6 @@ let stateful_vars_of_node
            a)
       stateful_vars
       locals
-  in
-  
-  (* Add property variables *)
-  let stateful_vars = 
-    add_to_svs
-      stateful_vars
-      (List.map (fun (sv, _, _) -> sv) props) 
   in
 
   (* Add stateful variables from assertions *)
@@ -1580,10 +1694,15 @@ type state_var_def =
   | CallOutput of position * LustreIndex.index
   | ProperEq of position * LustreIndex.index
   | GeneratedEq of position * LustreIndex.index
+  | FrameBlock of position
+  | IfBlock of position
   | ContractItem of position * LustreContract.svar * contract_item_type
   | Assertion of position
 
-let state_var_defs_map : state_var_def list StateVar.StateVarHashtbl.t = 
+(* The first list contains state var defs where the state variable is explicitly mentioned.
+   The second list contains state var defs that are dependencies (the node item does
+   not explicitly reference the state variable, but the state variable depends on it) *)
+let state_var_defs_map : (state_var_def list * state_var_def list) StateVar.StateVarHashtbl.t = 
   StateVar.StateVarHashtbl.create 20
 
 let get_state_var_defs state_var = 
@@ -1591,7 +1710,7 @@ let get_state_var_defs state_var =
     StateVar.StateVarHashtbl.find
       state_var_defs_map 
       state_var
-  with Not_found -> []
+  with Not_found -> ([], [])
 
 let state_var_defs_equal d1 d2 =
   match d1, d2 with
@@ -1599,51 +1718,65 @@ let state_var_defs_equal d1 d2 =
   | ProperEq (p1, i1), ProperEq (p2, i2)
   | GeneratedEq (p1, i1), GeneratedEq (p2, i2) ->
     (Lib.equal_pos p1 p2) && LustreIndex.equal_index i1 i2
+  | FrameBlock p1, FrameBlock p2 -> Lib.equal_pos p1 p2
+  | IfBlock p1, IfBlock p2 -> Lib.equal_pos p1 p2
   | ContractItem (p1, svar1, typ1), ContractItem (p2, svar2, typ2) ->
     (Lib.equal_pos p1 p2) && typ1 = typ2 && StateVar.equal_state_vars svar1.svar svar2.svar
   | Assertion p1, Assertion p2 -> (Lib.equal_pos p1 p2)
   | _ -> false
 
-let add_state_var_def state_var def = 
-  let defs = get_state_var_defs state_var in
-  let defs =
-    if List.exists (fun d -> state_var_defs_equal d def) defs
-    then defs
-    else def::defs
-  in
-
+let add_state_var_def ?(is_dep = false) state_var def  = 
+  let (defs1, defs2) = get_state_var_defs state_var in
+  let (defs1, defs2) =
+  if not is_dep then
+      (if List.exists (fun d -> state_var_defs_equal d def) defs1
+      then defs1, defs2
+      else def::defs1, defs2)
+  else 
+    (if List.exists (fun d -> state_var_defs_equal d def) defs2
+      then defs1, defs2
+      else defs1, def::defs2)
+    in
   StateVar.StateVarHashtbl.replace
     state_var_defs_map 
     state_var
-    defs
+    (defs1, defs2)
 
 let pos_of_state_var_def = function
   | CallOutput (p,_) | ProperEq (p,_) | GeneratedEq (p,_)
+  | FrameBlock p | IfBlock p
   | ContractItem (p, _, _) | Assertion p -> p
 
 let index_of_state_var_def = function
   | CallOutput (_,i) | ProperEq (_,i) | GeneratedEq (_,i) -> i
-  | ContractItem _ | Assertion _ -> []
+  | FrameBlock _ | IfBlock _ | ContractItem _ | Assertion _ -> []
+
+let pp_print_state_var_def fmt = (function
+  | CallOutput (p,i) ->
+    Format.fprintf fmt "Call Output: %a (%a)\n"
+    Lib.pp_print_position p (LustreIndex.pp_print_index true) i
+  | ProperEq (p,i) ->
+    Format.fprintf fmt "Proper Eq: %a (%a)\n"
+    Lib.pp_print_position p (LustreIndex.pp_print_index true) i
+  | GeneratedEq (p,i) ->
+    Format.fprintf fmt "Generated Eq: %a (%a)\n"
+    Lib.pp_print_position p (LustreIndex.pp_print_index true) i
+  | FrameBlock p ->
+    Format.fprintf fmt "Frame Block: %a\n" Lib.pp_print_position p
+  | IfBlock p ->
+    Format.fprintf fmt "If Block: %a\n" Lib.pp_print_position p
+  | ContractItem (p,_,_) ->
+    Format.fprintf fmt "Contract Item: %a\n" Lib.pp_print_position p
+  | Assertion p ->
+    Format.fprintf fmt "Assertion: %a\n" Lib.pp_print_position p
+  )
 
 let pp_print_state_var_defs_debug fmt t =
   let print_sv state_var =
     Format.fprintf fmt "--- %a ---\n" StateVar.pp_print_state_var state_var ;
-    get_state_var_defs state_var
-    |> List.iter (function
-      | CallOutput (p,i) ->
-        Format.fprintf fmt "Call Output: %a (%a)\n"
-        Lib.pp_print_position p (LustreIndex.pp_print_index true) i
-      | ProperEq (p,i) ->
-        Format.fprintf fmt "Proper Eq: %a (%a)\n"
-        Lib.pp_print_position p (LustreIndex.pp_print_index true) i
-      | GeneratedEq (p,i) ->
-        Format.fprintf fmt "Generated Eq: %a (%a)\n"
-        Lib.pp_print_position p (LustreIndex.pp_print_index true) i
-      | ContractItem (p,_,_) ->
-        Format.fprintf fmt "Contract Item: %a\n" Lib.pp_print_position p
-      | Assertion p ->
-        Format.fprintf fmt "Assertion: %a\n" Lib.pp_print_position p
-      )
+    get_state_var_defs state_var 
+    |> (fun (x, y) -> x @ y)
+    |> List.iter (pp_print_state_var_def fmt)
   in
   List.iter print_sv (get_all_state_vars t)
 

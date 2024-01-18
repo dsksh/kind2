@@ -94,7 +94,7 @@ val pp_print_state_var_instances_debug: Format.formatter -> 'a t -> unit
 
 val pp_print_state_var_defs_debug: Format.formatter -> 'a t -> unit
 
-val lustre_definitions_of_state_var : 'a t -> StateVar.t -> LustreNode.state_var_def list
+val lustre_definitions_of_state_var : 'a t -> StateVar.t -> LustreNode.state_var_def list * LustreNode.state_var_def list
 
 val lustre_source_ast : 'a t -> LustreAst.t
 
@@ -124,6 +124,9 @@ val reconstruct_lustre_streams :
 val mk_state_var_to_lustre_name_map :
   _ t -> StateVar.t list -> string StateVar.StateVarMap.t
 
+(** Returns a map from call state variables to lustre-like names *)
+val call_state_var_to_lustre_reference :
+  _ t -> StateVar.t list -> string StateVar.StateVarMap.t
 
 val is_lustre_input : _ t -> bool
 

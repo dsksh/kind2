@@ -164,7 +164,7 @@ let main input_file input_sys _ trans_sys =
   (* Create solver instance *)
   let solver = 
     Flags.Smt.solver ()
-    |> SMTSolver.create_instance ~produce_assignments:true logic
+    |> SMTSolver.create_instance ~produce_models:true logic
   in
 
   (* Create a reference for the solver. Only used in on_exit. *)
@@ -177,6 +177,8 @@ let main input_file input_sys _ trans_sys =
     (SMTSolver.declare_fun solver)
     (SMTSolver.declare_sort solver)
     Numeral.(~- one) Numeral.(of_int steps) ;
+
+  TransSys.assert_global_constraints trans_sys (SMTSolver.assert_term solver) ;
 
   (* Assert initial state constraint *)
     SMTSolver.assert_term solver

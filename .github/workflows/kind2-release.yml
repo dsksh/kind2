@@ -18,15 +18,15 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v1
+      uses: docker/setup-buildx-action@v2
       with:
         driver-opts: network=host
 
     - name: Build and push to local registry
-      uses: docker/build-push-action@v2
+      uses: docker/build-push-action@v3
       with:
         file: docker/Dockerfile
         context: ./
@@ -36,13 +36,13 @@ jobs:
     
     - name: Extract kind 2 binary
       id: extract
-      uses: shrink/actions-docker-extract@v1
+      uses: shrink/actions-docker-extract@v2
       with:
         image: localhost:5000/name/kind2:latest
         path: /home/opam/kind2-build/bin/kind2
 
     - name: Upload kind2 binary
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         path: ${{ steps.extract.outputs.destination }}
         name: linux
@@ -51,20 +51,21 @@ jobs:
   kind2-macos-bin:
     if: github.repository == 'kind2-mc/kind2'
     strategy:
-      matrix:
-        ocaml-version: [ 4.12.0 ]
-        os: [ macos-10.15 ]
+      matrix: # Single configuration
+        ocaml-version: [ 4.14.1 ]
+        # Only matrix variables can be used at runs-on
+        os: [ macos-12 ]
 
     runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
-    - name: Set up OCaml ${{ matrix.ocaml-version }}
+    - name: Set up OCaml ${{ matrix.ocaml-version }}+flambda
       uses: ocaml/setup-ocaml@v2
       with:
-        ocaml-compiler: ${{ matrix.ocaml-version }}
+        ocaml-compiler: ocaml-variants.${{ matrix.ocaml-version }}+options,ocaml-option-flambda
 
     - name: Install Kind2 OCaml dependencies
       run: opam install -y . --deps-only
@@ -76,7 +77,7 @@ jobs:
       run: strip bin/kind2
 
     - name: Upload Kind 2 binary
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: ${{ matrix.os }}
         path: bin/kind2
@@ -85,31 +86,21 @@ jobs:
     if: github.repository == 'kind2-mc/kind2'
     runs-on: ubuntu-latest
     needs: [kind2-linux-bin, kind2-macos-bin]
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.id }}
 
     steps:
-    - name: Get the version
-      id: get_version
-      run: echo ::set-output name=id::${GITHUB_REF/refs\/tags\//}
-      #run: echo ::set-output name=id::${GITHUB_REF/refs\/heads\//}
-
     - name: Create new release
-      id: create_release
-      uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.get_version.outputs.id }}
-        release_name: Kind 2 ${{ steps.get_version.outputs.id }}
-        body: |
-          TODO:
+      run: |
+        cat > Release_Notes.txt << EOF
+        TODO:
           - Generate and upload user_documentation.pdf
           - Replace this text with the release notes
-          - Publish the release!
-        draft: true
-        prerelease: false
+          - Publish the release!"
+        EOF
+        gh release create $GITHUB_REF_NAME --verify-tag --draft \
+          --title "Kind 2 $GITHUB_REF_NAME" --notes-file Release_Notes.txt \
+          --repo $GITHUB_REPOSITORY
     
   upload-artifact:
     if: github.repository == 'kind2-mc/kind2'
@@ -117,11 +108,11 @@ jobs:
     needs: [create-new-release]
     strategy:
       matrix:
-        version: [linux, macos-10.15]
+        version: [linux, macos-12]
 
     steps:
     - name: Download binary
-      uses: actions/download-artifact@v2
+      uses: actions/download-artifact@v3
       with:
         name: ${{ matrix.version }}
     
@@ -129,17 +120,15 @@ jobs:
       id: create_tarball
       run: |
         chmod u+x kind2
-        version=${{ needs.create-new-release.outputs.version }}
+        version=$GITHUB_REF_NAME
         tarball=kind2-$version-${{ matrix.version }}-x86_64.tar.gz
         tar -czf $tarball kind2
-        echo "::set-output name=filename::$tarball"
+        echo "filename=$tarball" >> $GITHUB_OUTPUT
     
-    - name: Upload artifact
-      uses: actions/upload-release-asset@v1
+    - name: Upload release asset
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ needs.create-new-release.outputs.upload_url }}
-        asset_path: ${{ steps.create_tarball.outputs.filename }}
-        asset_name: ${{ steps.create_tarball.outputs.filename }}
-        asset_content_type: application/gzip
+      run: |
+        gh release upload $GITHUB_REF_NAME \
+           ${{ steps.create_tarball.outputs.filename }} \
+           --repo $GITHUB_REPOSITORY

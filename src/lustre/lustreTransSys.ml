@@ -197,6 +197,7 @@ let lift_prop_name node_name pos prop_name =
 
 (* Create a property from Lustre expression *)
 let property_of_expr
+  ?(prop_kind=P.Invariant)
   candidate
   prop_name
   prop_status
@@ -216,7 +217,7 @@ let property_of_expr
   in
 
   (* Return property *)
-  { P.prop_name ; P.prop_source ; P.prop_term ; P.prop_status }
+  { P.prop_name ; P.prop_source ; P.prop_term ; P.prop_status ; prop_kind }
 
 (* Creates the conjunction of a list of contract svar. *)
 let conj_of l = List.map (fun { C.svar } -> E.mk_var svar) l |> E.mk_and_n
@@ -241,6 +242,43 @@ let ass_and_mode_requires_of_contract = function
   )
 | None -> None, []
 
+
+let non_vacuity_check scope name pos requires props =
+  match requires with
+  | { C.scope = s } :: _ ->
+    let name =
+      Format.asprintf "%a%s%a" (
+        pp_print_list (
+          fun fmt (pos, call) ->
+            Format.fprintf fmt "%s%a."
+              call Lib.pp_print_line_and_column pos
+        ) ""
+      ) s name Lib.pp_print_line_and_column pos 
+    in
+    let guard = conj_of requires in
+    property_of_expr
+      ~prop_kind:(P.Reachable None) 
+      false
+      name
+      P.PropUnknown
+      (P.NonVacuityCheck (pos, scope))
+      (E.mk_not guard)
+    :: props
+  | _ ->
+    props
+
+let mode_non_vacuity_checks scope { C.modes } =
+  if Flags.check_nonvacuity () then (
+    List.fold_left
+      (fun props { C.name ; C.pos; C.requires } ->
+        let name = Format.asprintf "%a" (I.pp_print_ident true) name in
+        non_vacuity_check scope name pos requires props
+      )
+      []
+      modes
+  )
+  else []
+
 (* The guarantees of a contract, including mode implications, as properties. *)
 let guarantees_of_contract scope { C.guarantees ; C.modes } =
   (* Originally properties are unknown. *)
@@ -257,21 +295,28 @@ let guarantees_of_contract scope { C.guarantees ; C.modes } =
   (* Creates properties for mode implications of a mode. *)
   let implications_of_modes modes acc =
     modes |> List.fold_left (
-      fun acc { C.name ; C.requires ; C.ensures ; C.candidate } ->
+      fun acc { C.name ; C.pos; C.requires ; C.ensures ; C.candidate } ->
         let name = Format.asprintf "%a" (I.pp_print_ident true) name in
         (* LHS of the implication. *)
         let guard = conj_of requires in
         (* Generating one property per ensure. *)
-        ensures |> List.fold_left (
-          fun acc ({ C.pos ; C.svar } as sv) -> (
-            E.mk_var svar |> E.mk_impl guard
-            |> property_of_expr
-              candidate
-              (C.prop_name_of_svar sv name ".ensure")
-              prop_status
-              (P.GuaranteeModeImplication (pos, scope))
-          ) :: acc
-        ) acc
+        let ensure_props =
+          ensures |> List.fold_left (
+            fun acc ({ C.pos ; C.svar } as sv) -> (
+              E.mk_var svar |> E.mk_impl guard
+              |> property_of_expr
+                candidate
+                (C.prop_name_of_svar sv name ".ensure")
+                prop_status
+                (P.GuaranteeModeImplication (pos, scope))
+            ) :: acc
+          ) acc
+        in
+        if Flags.check_nonvacuity () then (
+          (* Generating one non-vacuity check per mode *)
+          non_vacuity_check scope name pos requires ensure_props
+        )
+        else ensure_props
     ) acc
   in
 
@@ -305,7 +350,8 @@ let subrequirements_of_contract call_pos scope svar_map { C.assumes } =
       { P.prop_name ;
         P.prop_source ;
         P.prop_term ;
-        P.prop_status }
+        P.prop_status ;
+        prop_kind = Invariant ; }
   )
 
 (* Builds the abstraction of a node given its contract.
@@ -340,10 +386,11 @@ let one_mode_active scope { C.modes } =
   else (
     let first_mode = List.hd modes in
     let pos = first_mode.C.pos in
-    let path = first_mode.C.path |> List.rev |> List.tl |> List.rev in
+    let rev_path = first_mode.C.path |> List.rev |> List.tl in
     let name =
-      Format.asprintf "%a._one_mode_active"
-        (pp_print_list Format.pp_print_string ".") path
+      let l = ("_one_mode_active" :: rev_path) |> List.rev in
+      Format.asprintf "%a"
+        (pp_print_list Format.pp_print_string ".") l
     in
     (* Disjunction of mode requirements. *)
     let prop =
@@ -390,20 +437,40 @@ let add_constraints_of_type init terms state_var =
         indices
     in
 
-    let l, u = Type.bounds_of_int_range base_type in
-
-    let ct =
-      Term.mk_leq [ Term.mk_num l; select_term; Term.mk_num u]
+    let ct = 
+      if Type.is_enum base_type then 
+        let l, u = Type.bounds_of_enum base_type in 
+        Term.mk_leq [ Term.mk_num l; select_term; Term.mk_num u]
+      else 
+        match Type.bounds_of_int_range base_type with 
+          | Some l, Some u -> Term.mk_leq [ Term.mk_num l; select_term; Term.mk_num u]
+          | None, Some u -> Term.mk_leq [ select_term; Term.mk_num u]
+          | Some l, None -> Term.mk_leq [ Term.mk_num l; select_term]
+          | None, None -> Term.mk_bool true
     in
 
     let qct =
       List.fold_left
         (fun acc (ty, iv) ->
            match Type.node_of_type ty with
-           | Type.IntRange (i, j, Type.Range) -> (
+           | Type.IntRange (Some i, Some j) -> (
              let bounds =
                Term.mk_leq
                  [ Term.mk_num i; Term.mk_var iv; Term.mk_num Numeral.(j - one)]
+             in
+             Term.mk_forall [iv] (Term.mk_implies [bounds; acc])
+           )
+           | Type.IntRange (None, Some j) -> (
+             let bounds =
+               Term.mk_leq
+                 [ Term.mk_var iv; Term.mk_num Numeral.(j - one)]
+             in
+             Term.mk_forall [iv] (Term.mk_implies [bounds; acc])
+           )
+           | Type.IntRange (Some i, None) -> (
+             let bounds =
+               Term.mk_leq
+                 [ Term.mk_num i; Term.mk_var iv; ]
              in
              Term.mk_forall [iv] (Term.mk_implies [bounds; acc])
            )
@@ -421,23 +488,34 @@ let add_constraints_of_type init terms state_var =
   else (
 
     (* Get bounds of integer range *)
-    let l, u = Type.bounds_of_int_range state_var_type in
+    let l, u = 
+      (if Type.is_int_range state_var_type
+      then Type.bounds_of_int_range state_var_type
+      else Type.bounds_of_enum state_var_type |> (fun (a, b) -> Some a, Some b))
+    in
+    let 
+    var = Var.mk_state_var_instance state_var 
+                    (if init then TransSys.init_base else TransSys.trans_base) |> Term.mk_var
+    in
 
     (* Constrain values of variable between bounds *)
-    Term.mk_leq
-      [ Term.mk_num l; 
-        Var.mk_state_var_instance
-          state_var
-          (if init then 
-             TransSys.init_base 
-           else 
-             TransSys.trans_base)
-        |> Term.mk_var;
-        Term.mk_num u]
-
-    (* Add to terms *)
-    :: terms 
-
+    match l, u with 
+      | Some l, Some u ->
+        Term.mk_leq
+          [ Term.mk_num l; var; Term.mk_num u ]
+        (* Add to terms *)
+        :: terms 
+      | Some l, None ->
+        Term.mk_leq
+          [ Term.mk_num l; var; ]
+      (* Add to terms *)
+      :: terms 
+    | None, Some u -> 
+      Term.mk_leq
+        [ var; Term.mk_num u ]
+      (* Add to terms *)
+      :: terms 
+    | None, None -> Term.mk_bool true :: terms
   )
                   
 
@@ -642,7 +720,7 @@ let call_terms_of_node_call mk_fresh_state_var globals
   let node_props =
     if Flags.check_subproperties () && not (Flags.modular ()) then (
       properties |> List.fold_left (
-        fun a ({ P.prop_name = n; P.prop_term = t } as p) ->
+        fun a ({ P.prop_name = n; P.prop_term = t; P.prop_kind } as p) ->
 
           (* Lift name of property *)
           let prop_name =
@@ -669,7 +747,8 @@ let call_terms_of_node_call mk_fresh_state_var globals
           { P.prop_name ;
             P.prop_source ;
             P.prop_term ;
-            P.prop_status } :: a
+            P.prop_status ;
+            P.prop_kind ; } :: a
       ) node_props
     )
     else node_props
@@ -717,16 +796,29 @@ let call_terms_of_node_call mk_fresh_state_var globals
        call_locals)
   in
 
+  let non_constant_inputs =
+    (* Filter out inputs that are constants FOR THE CALLEE. *)
+    D.fold2
+      (fun formal_idx formal_sv actual_sv acc ->
+        if StateVar.is_const formal_sv then acc
+        else D.add formal_idx actual_sv acc
+      )
+      inputs
+      call_inputs
+      D.empty
+    |> D.values
+  in
+
+  let call_locals =
+    (* Filter out instance vars that are arguments of a constant parameter in a subnode call *)
+    List.filter (fun sv -> StateVar.is_const sv |> not) call_locals
+  in
+
   (* Return actual parameters of transition relation at bound in the
      correct order *)
   let trans_params_of_bound term_of_state_var pre_term_of_state_var =
     init_params_of_bound term_of_state_var @ (
-      ( (D.values call_inputs) @ D.values call_outputs @ call_locals )
-      |> List.filter (
-        (* Filter out svars that are constants FOR THE CALLEE. *)
-        fun sv ->
-          SVM.find sv state_var_map_down |> StateVar.is_const |> not
-      )
+      ( non_constant_inputs @ D.values call_outputs @ call_locals )
       |> List.map pre_term_of_state_var
     )
   in
@@ -1360,7 +1452,7 @@ module MBounds = Map.Make (struct
 
 (* Add constraints from equations to initial state constraint and
    transition relation *)
-let rec constraints_of_equations_wo_arrays node
+let rec constraints_of_equations_wo_arrays transfer_defs node
     eq_bounds init stateful_vars terms (lets, lets_dependencies) = function
   (* Constraints for all equations generated *)
   | [] -> terms, lets, eq_bounds
@@ -1385,14 +1477,16 @@ let rec constraints_of_equations_wo_arrays node
     in
 
     (* Add terms of equation *)
-    constraints_of_equations_wo_arrays node
+    constraints_of_equations_wo_arrays transfer_defs node
       eq_bounds init stateful_vars (def :: terms) (lets, lets_dependencies) tl
 
 
   (* Can define state variable with a let binding *)
   | ((state_var, []), ({ E.expr_init; E.expr_step } as expr)) :: tl ->
 
-    (*if not (E.is_var expr) then begin*)
+    if transfer_defs then (
+    (* TODO: Factor out and optimize this code *)
+    (*if not (E.is_var expr) then ( *)
       (* We update the let dependencies *)
       let add_dependency sv acc =
         let old =
@@ -1417,9 +1511,10 @@ let rec constraints_of_equations_wo_arrays node
         with Not_found -> SVS.empty
       in
       let dependencies = SVS.add state_var dependencies in
-      let defs = N.get_state_var_defs state_var in
+      let defs = N.get_state_var_defs state_var |> fun (x, y) -> x @ y in
       let add_defs_to_sv sv =
-        List.iter (fun def -> N.add_state_var_def sv def) defs
+        (* These state var defs are dependencies, so ?is_dep is 'true' here *)
+        List.iter (fun def -> N.add_state_var_def ~is_dep:true sv def) defs
       in
       let depends_on_this_sv expr =
         SVS.inter dependencies (svs_in_expr expr)
@@ -1430,7 +1525,7 @@ let rec constraints_of_equations_wo_arrays node
         then add_defs_to_sv sv
       in
       List.iter transfer_defs_to_eq_if_needed node.N.equations
-    (*end*) ;
+    ) ;
 
     (* Let binding for stateless variable, in closure form *)
     let let_closure =
@@ -1469,7 +1564,7 @@ let rec constraints_of_equations_wo_arrays node
     in
 
     (* Start with singleton lists of let-bound terms *)
-    constraints_of_equations_wo_arrays node
+    constraints_of_equations_wo_arrays transfer_defs node
       eq_bounds init stateful_vars terms (let_closure :: lets, lets_dependencies) tl
 
   (* Array state variable *)
@@ -1480,7 +1575,7 @@ let rec constraints_of_equations_wo_arrays node
     (* map equation to its bounds for future treatment and continue *)
     let eq_bounds = MBounds.add bounds (eq :: other_eqs) eq_bounds in
     
-    constraints_of_equations_wo_arrays node
+    constraints_of_equations_wo_arrays transfer_defs node
       eq_bounds init stateful_vars terms (lets, lets_dependencies) tl
 
 
@@ -1588,7 +1683,10 @@ let constraints_of_equations node init stateful_vars terms equations =
         
   (* make constraints for equations which do not redefine arrays first *)
   let terms, lets, eq_bounds =
-    constraints_of_equations_wo_arrays node
+    let transfer_defs =
+      Flags.IVC.compute_ivc () || List.mem `MCS (Flags.enabled ())
+    in
+    constraints_of_equations_wo_arrays transfer_defs node
       MBounds.empty init stateful_vars terms ([], SVM.empty) equations
     in
 
@@ -1860,7 +1958,9 @@ let rec trans_sys_of_node'
                   (* Add property for completeness of modes if top node is
                     abstract. *)
                   if A.param_scope_is_abstract analysis_param scope then
-                    one_mode_active scope contract
+                    List.rev_append
+                      (mode_non_vacuity_checks scope contract)
+                      (one_mode_active scope contract)
                   else []
                 else
                   [], []
@@ -1936,17 +2036,19 @@ let rec trans_sys_of_node'
             )
           in
 
+          let filter_enum_svars =
+            List.filter (fun state_var ->
+              let state_var_type = StateVar.type_of_state_var state_var in
+              if Type.is_array state_var_type then
+                let base_type = Type.last_elem_type_of_array state_var_type in
+                Type.is_enum base_type
+              else
+                Type.is_enum state_var_type
+            )
+          in
+
           let subrange_and_enum_state_vars =
-            let enum_state_vars =
-              all_state_vars |> List.filter (fun state_var ->
-                let state_var_type = StateVar.type_of_state_var state_var in
-                if Type.is_array state_var_type then
-                  let base_type = Type.last_elem_type_of_array state_var_type in
-                  Type.is_enum base_type
-                else
-                  Type.is_enum state_var_type
-              )
-            in
+            let enum_state_vars = filter_enum_svars all_state_vars in
             (* Inputs, defined outputs, and locals require a check.
                This is currently done in lustreDeclarations and lustreContext.
             *)
@@ -2051,14 +2153,33 @@ let rec trans_sys_of_node'
             |> List.rev
           in
           
-          let global_consts_sv =
+          let global_const_svars =
             List.map Var.state_var_of_state_var_instance global_consts
-            |> SVS.of_list in
-          let stateful_vars = List.filter (fun sv ->
-              not (SVS.mem sv global_consts_sv)
-            ) stateful_vars
           in
-          
+
+          let global_constraints =
+            List.map
+              (E.base_term_of_t TransSys.init_base)
+              globals.G.global_constraints
+          in
+
+          let global_constraints =
+            let enum_consts = filter_enum_svars global_const_svars in
+            List.fold_left
+              (add_constraints_of_type true)
+              global_constraints
+              enum_consts
+          in
+
+          let stateful_vars =
+            let global_const_svars =
+              SVS.of_list global_const_svars
+            in
+            List.filter
+              (fun sv -> not (SVS.mem sv global_const_svars))
+              stateful_vars
+          in
+
           (* Order initial state equations by dependency and
              generate terms *)
           let init_terms, svar_dep_init, node_output_input_dep_init =
@@ -2124,7 +2245,7 @@ let rec trans_sys_of_node'
 
             (* Iterate over each property annotation *)
             List.map (
-              fun (state_var, prop_name, prop_source) -> 
+              fun (state_var, prop_name, prop_source, prop_kind) -> 
 
               (* Property is just the state variable *)
               let prop_term =
@@ -2136,7 +2257,8 @@ let rec trans_sys_of_node'
               { P.prop_name; 
                 P.prop_source; 
                 P.prop_term;
-                P.prop_status }
+                P.prop_status;
+                P.prop_kind; }
             ) props
               
             (* Add to existing properties *)
@@ -2316,6 +2438,7 @@ let rec trans_sys_of_node'
               unconstrained_inputs
               globals.G.state_var_bounds
               global_consts
+              global_constraints
               ufs
               init_uf_symbol
               init_formals

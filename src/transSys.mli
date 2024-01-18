@@ -79,7 +79,10 @@ type instance =
 
     map_down : StateVar.t StateVar.StateVarMap.t;
     (** Map from the state variables of this system to the state
-        variables of the instance *)
+        variables of the instance. If the same variable is passed in
+        multiple arguments, the variable is only associated to
+        one of the formal parameters. Notice that for output and
+        local variables there is a one-to-one correspondence. *)
 
     map_up : StateVar.t StateVar.StateVarMap.t;
     (** Map from state variables of the called system to the state
@@ -121,6 +124,9 @@ val pp_print_trans_sys_name : Format.formatter -> t -> unit
 
 (** {1 Accessors} *)
 
+(** Return global constraints on free constants *)
+val global_constraints : t -> Term.t list
+
 (** Close the initial state constraint by binding all instance
     identifiers, and bump the state variable offsets to be at the given
     bound *)
@@ -160,7 +166,6 @@ val init_flag_state_var : t -> StateVar.t
 (** Return the init flag at the given bound *)
 val init_flag_of_bound : t -> Numeral.t -> Term.t
 
-
 (** Return the instance variables of this transition system, the
     initial state constraint at [init_base] and the transition relation
     at [trans_base] with the instance variables free. *)
@@ -168,6 +173,11 @@ val init_trans_open : t -> StateVar.t list * Term.t * Term.t
 
 (** Update the init and trans equations of a subsystem *)
 val set_subsystem_equations : t -> Scope.t -> Term.t -> Term.t -> t
+
+val set_global_constraints : t -> Term.t list -> t
+
+(** Set the logic of the transition system *)
+val set_logic : t -> TermLib.logic -> t
 
 (** Return the logic fragment needed to express the transition system *)
 val get_logic : t -> TermLib.logic
@@ -211,6 +221,10 @@ val get_split_properties :
 (** Returns function symbols declared in the transition system *)
 val get_function_symbols : t -> UfSymbol.t list
 
+(** Returns true if any subsystem (including top-level system) includes
+    a function symbol *)
+val subsystem_includes_function_symbol : t -> bool
+
 (** Make a copy of every mutable field of the transition system and its subsystems. *)
 val copy : t -> t
 
@@ -242,6 +256,9 @@ val mk_trans_sys :
 
   (* Global free constants *)
   Var.t list  -> 
+
+  (* Global constraints on free constants *)
+  Term.t list ->
 
   (* Declarations of other function symbols *)
   UfSymbol.t list  -> 
@@ -358,7 +375,7 @@ val get_sofar_term: t -> Lib.position -> (Term.t * bool) option
 
 val get_max_depth : t -> int
 
-val map_cex_prop_to_subsystem : (Scope.t -> instance -> (StateVar.t * Model.value list) list ->  Model.value list -> Model.value list) -> t -> (StateVar.t * Model.value list) list -> Property.t -> t * instance list * (StateVar.t * Model.value list) list * Property.t 
+(*val map_cex_prop_to_subsystem : (Scope.t -> instance -> (StateVar.t * Model.value list) list ->  Model.value list -> Model.value list) -> t -> (StateVar.t * Model.value list) list -> Property.t -> t * instance list * (StateVar.t * Model.value list) list * Property.t *)
 
 (** {1 State Variables} *)
 
@@ -473,6 +490,13 @@ val define_and_declare_of_bounds :
   (Type.t -> unit) ->
   Numeral.t -> Numeral.t -> unit
 
+(** [assert_global_constraints t a] uses function [a] to assert
+    the global constraints of transition system [t]
+
+    The signature of [a] is that of {!SMTSolver.assert_term}
+    *)
+val assert_global_constraints : t -> (Term.t -> unit) -> unit
+
 (** Return predicate definitions of initial state and transition
     relation of the top system and all its subsystem in reverse
     topological order
@@ -503,6 +527,12 @@ val get_prop_term : t -> string -> Term.t
     system of the first property of name [n]. *)
 val get_prop_status : t -> string -> Property.prop_status 
 
+(** Return current kind of the property
+
+[get_prop_kind t n] returns the kind saved in the transition
+system of the first property of name [n]. *)
+val get_prop_kind : t -> string -> Property.prop_kind 
+
 
 (** Returns true if the input term is a known invariant of the system. *)
 val is_inv : t -> Term.t -> bool
@@ -516,9 +546,24 @@ val is_disproved : t -> string -> bool
 
 (** Return current status of all properties excepted candidates
 
-    [get_prop_status t] returns the status saved in the transition
+    [get_prop_status_all_nocands t] returns the status saved in the transition
     system of each property along with the name of the property. *)
 val get_prop_status_all_nocands : t -> (string * Property.prop_status) list
+
+(** Return the kind of all properties excepted candidates
+
+    [get_prop_kind_all_nocands t] returns the kind saved in the transition
+    system of each property along with the name of the property. *)
+val get_prop_kind_all_nocands : t -> (string * Property.prop_kind) list
+
+(** Return the internally generated counter for reachability queries (if it exists) *)
+val get_ctr : t -> StateVar.t option
+
+(** Return current status and kind of all properties excepted candidates
+
+    [get_prop_status_and_kind_all_nocands t] returns the status saved in the transition
+    system of each property along with the name of the property. *)
+val get_prop_status_and_kind_all_nocands : t -> (string * Property.prop_status * Property.prop_kind) list
 
 (** Return current status of all unknown properties
 
@@ -533,6 +578,16 @@ val get_prop_status_all_unknown : t -> (string * Property.prop_status) list
 
 (** Instantiate all properties to the bound *)
 val props_list_of_bound : t -> Numeral.t -> (string * Term.t) list 
+
+(** Instantiate all properties to the bound, but only properties where
+    the BMC engine CANNOT skip steps. This only includes invariant properties
+    and reachability queries without lower bounds. *)
+val props_list_of_bound_no_skip : t -> Numeral.t -> (string * Term.t) list 
+
+(** Instantiate all properties to the bound, but only properties where
+    the BMC engine CAN skip steps. This only includes reachability queries
+    with lower bounds. *)
+val props_list_of_bound_skip : t -> Numeral.t -> (string * Term.t) list 
 
 
 (** Update current status of the property

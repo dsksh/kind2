@@ -80,10 +80,6 @@ type binary_operator =
 
 type ternary_operator =
   | Ite
-  | With (* With operator for recursive definitions *)
-
-type n_arity_operator =
-  | OneHot
 
 type comparison_operator =
   | Eq | Neq  | Lte  | Lt  | Gte | Gt
@@ -114,7 +110,7 @@ type lustre_type =
   | Int16 of position
   | Int32 of position
   | Int64 of position
-  | IntRange of position * expr * expr
+  | IntRange of position * expr option * expr option
   | Real of position
   | UserType of position * ident
   | AbstractType of position * ident
@@ -141,34 +137,29 @@ and expr =
   | UnaryOp of position * unary_operator * expr
   | BinaryOp of position * binary_operator * expr * expr
   | TernaryOp of position * ternary_operator * expr * expr * expr
-  | NArityOp of position * n_arity_operator * expr list
   | ConvOp of position * conversion_operator * expr
   | CompOp of position * comparison_operator * expr * expr
+  | AnyOp of position * typed_ident * expr * expr option
   (* Structured expressions *)
   | RecordExpr of position * ident * (ident * expr) list
   | GroupExpr of position * group_expr * expr list
   (* Update of structured expressions *)
   | StructUpdate of position * expr * label_or_index list * expr
   | ArrayConstr of position * expr * expr 
-  | ArraySlice of position * expr * (expr * expr) 
   | ArrayIndex of position * expr * expr
-  | ArrayConcat of position * expr * expr
   (* Quantified expressions *)
   | Quantifier of position * quantifier * typed_ident list * expr
   (* Clock operators *)
   | When of position * expr * clock_expr
-  | Current of position * expr
   | Condact of position * expr * expr * ident * expr list * expr list
   | Activate of position * ident * expr * expr * expr list
   | Merge of position * ident * (ident * expr) list
   | RestartEvery of position * ident * expr list * expr
   (* Temporal operators *)
   | Pre of position * expr
-  | Fby of position * expr * int * expr
   | Arrow of position * expr * expr
   (* Node calls *)
   | Call of position * ident * expr list
-  | CallParam of position * ident * lustre_type list * expr list
 
 (** An identifier with a type *)
 and typed_ident = position * ident * lustre_type
@@ -220,22 +211,42 @@ type struct_item =
 type eq_lhs = 
   | StructDef of position * struct_item list
 
+(* The left-hand side of an equation in a contract *)
+type contract_eq_lhs =
+| GhostVarDec of position * typed_ident list
+
 (** An equation or assertion in the node body *)
 type node_equation =
   | Assert of position * expr
   | Equation of position * eq_lhs * expr 
 
+(** For reachable properties, the user can optionally specify a bound to look
+    for a witness from/within/at a certain timestep *)
+type prop_bound =
+  | From of int
+  | Within of int
+  | At of int
+  | FromWithin of int * int
+
+(** Whether a property is reachable or invariant *)
+type prop_kind =
+  | Invariant
+  | Reachable of prop_bound option
+  | Provided of expr
+
 (** An item in a node declaration *)
 type node_item =
   | Body of node_equation
-  | AnnotMain of bool
-  | AnnotProperty of position * HString.t option * expr
+  | IfBlock of position * expr * node_item list * node_item list
+  | FrameBlock of position * (position * ident) list * node_equation list * node_item list 
+  | AnnotMain of position * bool
+  | AnnotProperty of position * HString.t option * expr * prop_kind
 
 (* A contract ghost constant. *)
 type contract_ghost_const = const_decl
 
-(* A contract ghost variable. *)
-type contract_ghost_var = const_decl
+(* Multiple contract ghost variables declared simultaneously. *)
+type contract_ghost_vars = position * contract_eq_lhs * expr
 
 (* A contract assume. *)
 type contract_assume = position * HString.t option * bool (* soft *) * expr
@@ -262,7 +273,7 @@ type contract_assump_vars = position * (position * HString.t) list
 (* Equations that can appear in a contract node. *)
 type contract_node_equation =
   | GhostConst of contract_ghost_const
-  | GhostVar of contract_ghost_var
+  | GhostVars of contract_ghost_vars
   | Assume of contract_assume
   | Guarantee of contract_guarantee
   | Mode of contract_mode
@@ -361,6 +372,7 @@ val pp_print_node_local_decl :
   Format.formatter -> node_local_decl list -> unit
 val pp_print_struct_item : Format.formatter -> struct_item -> unit
 val pp_print_eq_lhs: Format.formatter -> eq_lhs -> unit
+val pp_print_contract_eq_lhs: Format.formatter -> contract_eq_lhs -> unit
 val pp_print_node_body: Format.formatter -> node_equation -> unit
 val pp_print_node_item : Format.formatter -> node_item -> unit
 val pp_print_declaration : Format.formatter -> declaration -> unit

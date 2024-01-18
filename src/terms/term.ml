@@ -191,11 +191,18 @@ let is_named t =  match node_of_term t with
   | T.Annot (_, a) when TermAttr.is_named a -> true
   | _ -> false
 
+let is_interp_group t =  match node_of_term t with
+  | T.Annot (_, a) when TermAttr.is_interp_group a -> true
+  | _ -> false
 
 (* Return the term of a named term *)
 let term_of_named t =  match node_of_term t with
   | T.Annot (t, a) when TermAttr.is_named a -> t
   | _ -> invalid_arg "term_of_named"
+
+let term_of_interp_group t =  match node_of_term t with
+  | T.Annot (t, a) when TermAttr.is_interp_group a -> t
+  | _ -> invalid_arg "term_of_interp_group"
 
 
 (* Return the name of a named term *)
@@ -206,9 +213,17 @@ let name_of_named t =  match node_of_term t with
     let (s, n) = TermAttr.named_of_attr a in
 
     (* Fail if not in term namespace, otherwise return integer *)
-    if s <> "t" then invalid_arg "term_of_named" else n
+    if s <> "t" then invalid_arg "name_of_named" else n
       
-  | _ -> invalid_arg "term_of_named"
+  | _ -> invalid_arg "name_of_named"
+
+
+let name_of_interp_group t =  match node_of_term t with
+  | T.Annot (_, a) when TermAttr.is_interp_group a ->
+
+    TermAttr.interp_group_of_attr a
+
+  | _ -> invalid_arg "name_of_interp_group"
 
 
 (* Return true if the term is an integer constant *)
@@ -713,7 +728,7 @@ let rec type_of_term' t = match T.destruct t with
 
             | _ -> assert false)
 
-        | `BVSIGNEXT i ->
+        | `BVSIGNEXT i | `BVZEROEXT i ->
 
           (match l with
           
@@ -1003,6 +1018,40 @@ let is_lambda_identity l =
     in
     equal tv lv
   with Invalid_argument _ -> false
+
+
+let get_atoms t =
+  let rec loop acc t =
+    match T.destruct t with
+    | T.Const _ -> (
+      if type_of_term t == Type.mk_bool () then
+        TermSet.add t acc
+      else
+        acc
+    )
+    | T.Var v -> (
+      if Var.type_of_var v == Type.mk_bool () then
+        TermSet.add t acc
+      else
+        acc
+    )
+    | T.App (_, l) -> (
+      if type_of_term t == Type.mk_bool () then
+        let atoms =
+          List.fold_left
+            (fun acc t -> loop acc t)
+            TermSet.empty
+            l
+        in
+        if TermSet.is_empty atoms then
+          TermSet.add t acc
+        else
+          TermSet.union acc atoms
+      else
+        TermSet.empty
+    )
+  in
+  loop TermSet.empty t
 
 
 (* Is the term a Boolean atom? *)
@@ -1512,6 +1561,10 @@ let mk_named t =
   (n, T.mk_annot t (TermAttr.mk_named "t" n))
 
 
+let set_inter_group t g =
+  T.mk_annot t (TermAttr.mk_interp_group g)
+
+
 (* Hashcons a named term *)
 let mk_named_unsafe t s n = 
 
@@ -1882,6 +1935,30 @@ let indexes_of_state_var sv term =
 (*   inds *)
 
 
+let push_select term =
+  let rec push_select' i t =
+    match destruct t with
+    | T.App (s, args) -> (
+      match Symbol.node_of_symbol s, args with
+      | `ITE, [p; l; r] -> (
+        mk_ite
+          p
+          (push_select' i l)
+          (push_select' i r)
+      )
+      | _ -> (mk_select t i)
+    )
+    | _ -> (mk_select t i)
+  in
+  match destruct term with
+  | T.App (s, args) -> (
+    match Symbol.node_of_symbol s, args with
+    | `SELECT _, [a; i] -> (
+      push_select' i a
+    )
+    | _ -> term
+  )
+  | _ -> term
 
 
 (* Return set of state variables at given offsets in term *)

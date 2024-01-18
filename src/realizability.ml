@@ -92,8 +92,8 @@ let compute_and_print_core solver terms =
 let compute_unsat_core sys context requirements ex_var_lst =
   let solver =
     SMTSolver.create_instance
-      ~produce_cores:true
-      ~produce_assignments:true
+      ~produce_unsat_assumptions:true
+      ~produce_models:true
       ~minimize_cores:true
       (TSys.get_logic sys)
       (Flags.Smt.solver ())
@@ -206,7 +206,10 @@ let realizability_check ?(include_invariants=false) vars_of_term
 
   let free_of_controllable_vars_at_0, contains_controllable_vars_at_0 =
     let init = TSys.init_of_bound None sys Numeral.zero in
-    term_partition controllable_vars_at_0 (get_conjucts init)
+    let constraints_at_0 =
+      (TransSys.global_constraints sys) @ (get_conjucts init)
+    in
+    term_partition controllable_vars_at_0 constraints_at_0
   in
 
   let rec loop fp1 fp =
@@ -453,13 +456,6 @@ let mk_assign_uncontr model contr_vars =
     model
     (fun (v,_) -> VS.mem v var_set |> not)
 
-let mk_assign_offset model offset =
-  filter_and_mk_assign
-    model
-    (fun (v,_) ->
-      Var.is_const_state_var v ||
-      Numeral.(equal (Var.offset_of_state_var_instance v) offset))
-
 let check_sat_and_get_minimal_unsat_core_lits solver act_terms =
   let rec minimize tested rest =
     match tested, rest with
@@ -551,7 +547,7 @@ let compute_deadlocking_trace_mus_impl solver sys cex offset minimal_unsat_core 
 
   let model = get_var_values_at_offset solver sys offset in
 
-  model, build_countertrace cex model
+  build_countertrace cex model
 
 (*
 let compute_independent_conflict_and_deadlocking_trace
@@ -589,11 +585,11 @@ let compute_dependent_conflict_and_deadlocking_trace
       compute_deadlocking_trace_max_smt_impl solver sys cex offset act_terms
     in
 
-    let assign_term = mk_assign_offset model offset in
+    let uncontr_assign = mk_assign_uncontr model contr_vars in
 
     SMTSolver.pop solver ;
 
-    SMTSolver.assert_term solver assign_term ;
+    SMTSolver.assert_term solver uncontr_assign ;
 
     let unsat_core_lits =
       check_sat_and_get_minimal_unsat_core_lits solver act_terms
@@ -622,16 +618,8 @@ let compute_dependent_conflict_and_deadlocking_trace
       check_sat_and_get_minimal_unsat_core_lits solver act_terms
     in
 
-    let model', cex' =
+    let cex' =
       compute_deadlocking_trace_mus_impl solver sys cex offset unsat_core_lits
-    in
-
-    let assign = mk_assign_offset model' offset in
-
-    SMTSolver.assert_term solver assign ;
-
-    let unsat_core_lits =
-      check_sat_and_get_minimal_unsat_core_lits solver act_terms
     in
 
     let conflict_set =
@@ -675,7 +663,8 @@ let compute_deadlocking_trace_and_conflict
           prop_name ;
           prop_source = Property.Generated (None, []) ;
           prop_term = vr_wo ;
-          prop_status = PropUnknown
+          prop_status = PropUnknown ;
+          prop_kind = Invariant ;
         }
       in
 
@@ -718,8 +707,8 @@ let compute_deadlocking_trace_and_conflict
 
   let solver =
     SMTSolver.create_instance
-      ~produce_cores:true
-      ~produce_assignments:true
+      ~produce_unsat_assumptions:true
+      ~produce_models:true
       ~minimize_cores:true
       (TSys.get_logic sys)
       (Flags.Smt.solver ())
@@ -755,6 +744,8 @@ let compute_deadlocking_trace_and_conflict
     Term.mk_and
       (neg_vr :: (cex_assigns @ guarantee_mode_elts_term @ other_term))
   in
+
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver) ;
 
   SMTSolver.assert_term solver constraints ;
 

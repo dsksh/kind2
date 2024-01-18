@@ -21,12 +21,19 @@
 
 type error_kind = Unknown of string
   | UndefinedLocal of HString.t
+  | DuplicateLocal of HString.t * Lib.position
+  | DuplicateOutput of HString.t * Lib.position
+  | DuplicateProperty of HString.t
   | UndefinedNode of HString.t
+  | UndefinedContract of HString.t
   | DanglingIdentifier of HString.t
+  | QuantifiedVariableInPre of HString.t
   | QuantifiedVariableInNodeArgument of HString.t * HString.t
   | SymbolicArrayIndexInNodeArgument of HString.t * HString.t
+  | AnyOpInFunction
   | NodeCallInFunction of HString.t
   | NodeCallInRefinableContract of string * HString.t
+  | NodeCallInConstant of HString.t
   | IllegalTemporalOperator of string * string
   | IllegalImportOfStatefulContract of HString.t
   | UnsupportedClockedInputOrOutput
@@ -38,6 +45,9 @@ type error_kind = Unknown of string
   | UnsupportedAssignment
   | AssumptionVariablesInContractNode
   | ClockMismatchInMerge
+  | MisplacedVarInFrameBlock of LustreAst.ident
+  | MisplacedAssertInFrameBlock
+  | IllegalClockExprInActivate of LustreAst.expr
 
 type error = [
   | `LustreSyntaxChecksError of Lib.position * error_kind

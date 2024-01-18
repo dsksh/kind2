@@ -60,7 +60,7 @@ let mk sys =
   (* Creating solver. *)
   let solver =
     S.create_instance
-      ~produce_assignments:true
+      ~produce_models:true
       (Sys.get_logic sys)
       (Flags.Smt.solver ())
   in
@@ -79,6 +79,8 @@ let mk sys =
     S.declare_fun solver fresh ;
     term_of_actlit fresh
   in
+
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver) ;
 
   (* Asserting init conditionally. *)
   S.trace_comment solver "|===| Conditional init." ;

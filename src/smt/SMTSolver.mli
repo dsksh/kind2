@@ -34,9 +34,10 @@ exception Timeout
     the given flags *)
 val create_instance :
   ?timeout: int ->
-  ?produce_assignments:bool ->
+  ?produce_models:bool ->
   ?produce_proofs:bool ->
-  ?produce_cores:bool ->
+  ?produce_unsat_cores:bool ->
+  ?produce_unsat_assumptions:bool ->
   ?minimize_cores:bool ->
   ?produce_interpolants:bool ->
   TermLib.logic ->
@@ -236,6 +237,8 @@ val kind : t -> Flags.Smt.solver
 val trace_comment : t -> string -> unit
 
 val get_interpolants : t -> SMTExpr.custom_arg list -> SMTExpr.t list
+
+val get_qe_interpolants : bool -> t -> Term.t list -> Term.t list
 
 (** Apply quantifier elimination to a SMTExpr *)
 val get_qe_expr : t -> SMTExpr.t -> Term.t list

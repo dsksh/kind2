@@ -35,11 +35,13 @@ let gentag =
 
 
 (* Instantiate module for SMTLIB2 solvers with drivers *)
-module BoolectorSMTLIB : SolverSig.S = SMTLIBSolver.Make (BoolectorDriver)
-module Z3SMTLIB : SolverSig.S = SMTLIBSolver.Make (Z3Driver)
-module CVC4SMTLIB : SolverSig.S = SMTLIBSolver.Make (CVC4Driver)
-module Yices2SMTLIB : SolverSig.S = SMTLIBSolver.Make (Yices2SMT2Driver)
+module BitwuzlaSMTLIB : SolverSig.S = SMTLIBSolver.Make (BitwuzlaDriver)
+module CVC5SMTLIB : SolverSig.S = SMTLIBSolver.Make (CVC5Driver)
 module MathSATSMTLIB : SolverSig.S = SMTLIBSolver.Make (MathSATDriver)
+module OpenSMTSMTLIB : SolverSig.S = SMTLIBSolver.Make (OpenSMTDriver)
+module SMTInterpolSMTLIB : SolverSig.S = SMTLIBSolver.Make (SMTInterpolDriver)
+module Yices2SMTLIB : SolverSig.S = SMTLIBSolver.Make (Yices2SMT2Driver)
+module Z3SMTLIB : SolverSig.S = SMTLIBSolver.Make (Z3Driver)
 
 (* SMT expression *)
 type expr = SMTExpr.t
@@ -57,7 +59,6 @@ type t = {
   id : int ;
   mutable next_assumption_id : int ;
   mutable last_assumptions : Term.t array ;
-  mutable next_getvalue_id : int ;
 }
 
 (** All solver instances created are stored in this map from solver id to
@@ -127,11 +128,12 @@ let bool_of_int_option = function
 
 (* Create a new instance of an SMT solver, declare all currently created
    uninterpreted function symbols *)
-let [@ocaml.warning "-27"] create_instance
+let create_instance
     ?timeout
-    ?produce_assignments
+    ?produce_models
     ?produce_proofs
-    ?produce_cores
+    ?produce_unsat_cores
+    ?produce_unsat_assumptions
     ?minimize_cores
     ?produce_interpolants
     l
@@ -144,11 +146,12 @@ let [@ocaml.warning "-27"] create_instance
   let module Params = 
   struct
     let timeout = bool_of_int_option timeout
-    let produce_assignments = bool_of_bool_option produce_assignments
+    let produce_models = bool_of_bool_option produce_models
     let produce_proofs = bool_of_bool_option produce_proofs
-    let produce_cores = bool_of_bool_option produce_cores
+    let produce_unsat_cores = bool_of_bool_option produce_unsat_cores
+    let produce_unsat_assumptions = bool_of_bool_option produce_unsat_assumptions
     let minimize_cores = bool_of_bool_option minimize_cores
-    (*let produce_interpolants = bool_of_bool_option produce_interpolants*)
+    let produce_interpolants = bool_of_bool_option produce_interpolants
     let logic = l
     let id = id
   end
@@ -157,12 +160,14 @@ let [@ocaml.warning "-27"] create_instance
   (* Module for solver from options *)
   let fomodule =
     match kind with
-    | `Boolector_SMTLIB -> (module BoolectorSMTLIB.Create(Params) : SolverSig.Inst)
+    | `Bitwuzla_SMTLIB -> (module BitwuzlaSMTLIB.Create(Params) : SolverSig.Inst)
+    | `cvc5_SMTLIB -> (module CVC5SMTLIB.Create(Params) : SolverSig.Inst)
     | `MathSAT_SMTLIB -> (module MathSATSMTLIB.Create(Params) : SolverSig.Inst)
-    | `Z3_SMTLIB -> (module Z3SMTLIB.Create(Params) : SolverSig.Inst)
-    | `CVC4_SMTLIB -> (module CVC4SMTLIB.Create(Params) : SolverSig.Inst)
-    | `Yices_SMTLIB ->  (module Yices2SMTLIB.Create(Params) : SolverSig.Inst)
+    | `OpenSMT_SMTLIB -> (module OpenSMTSMTLIB.Create(Params) : SolverSig.Inst)
+    | `SMTInterpol_SMTLIB -> (module SMTInterpolSMTLIB.Create(Params) : SolverSig.Inst)
     | `Yices_native -> (module YicesNative.Create(Params) : SolverSig.Inst)
+    | `Yices2_SMTLIB ->  (module Yices2SMTLIB.Create(Params) : SolverSig.Inst)
+    | `Z3_SMTLIB -> (module Z3SMTLIB.Create(Params) : SolverSig.Inst)
     | `detect -> assert false
   in
 
@@ -173,8 +178,7 @@ let [@ocaml.warning "-27"] create_instance
       term_names = Hashtbl.create 19;
       id = id;
       next_assumption_id = 0;
-      last_assumptions = [| |];
-      next_getvalue_id = 0; }
+      last_assumptions = [| |]; }
   in
 
   add_solver solver ;
@@ -347,6 +351,13 @@ let prof_get_unsat_core s =
   Stat.record_time Stat.smt_get_unsat_core_time;
   res
 
+let prof_get_unsat_assumptions s =
+  let module S = (val s.solver_inst) in
+  Stat.start_timer Stat.smt_get_unsat_core_time;
+  let res = S.get_unsat_assumptions () in
+  Stat.record_time Stat.smt_get_unsat_core_time;
+  res
+
 let trace_comment s c =
   let module S = (val s.solver_inst) in
   S.trace_comment c
@@ -370,46 +381,6 @@ let check_sat ?(timeout = 0) s =
 
   (* Fail on error *)
   | r -> smt_error s r
-
-
-(* Convert models given as pairs of SMT expressions to pairs of
-   variables and terms *)
-let values_of_smt_values conv_left type_left s smt_values =
-  let module S = (val s.solver_inst) in
-
-  (* Convert association list for get-value call to an association
-     list of variables to terms *)
-  List.map
-
-    (* Map pair of SMT expressions to a pair of variable and term *)
-    (function (v, e) -> 
-
-      (* Convert to variable or term and term *)
-      let v', e' = 
-        conv_left v, S.Conv.term_of_smtexpr e 
-      in
-
-      (* Get type of variable or term and term *)
-      let tv', te' = 
-        type_left v', Term.type_of_term e'
-      in
-
-      if 
-        (* Assignment of integer value to a real variable or term? *)
-        Type.equal_types tv' Type.t_real && 
-        Type.equal_types te' Type.t_int 
-
-      then
-
-        (* Convert integer to real *)
-        (v', Term.mk_to_real e')
-
-      else
-
-        (* Keep assignment *)
-        (v', e'))
-
-    smt_values
 
 
 let [@ocaml.warning "-27"] model_of_smt_values conv_left type_left s smt_values = 
@@ -711,7 +682,7 @@ let get_unsat_core_of_names s =
 let get_unsat_core_lits s =
   let module S = (val s.solver_inst) in
   
-  match prof_get_unsat_core s with 
+  match prof_get_unsat_assumptions s with 
 
     | `Unsat_core c -> 
 
@@ -767,7 +738,7 @@ let get_unsat_core_lits s =
    and NOT in AFTER the call to check_sat_assuming. *)
 let check_sat_assuming s if_sat if_unsat literals =
 
-  (* Calling check_sat_assuming with no litteral fails with CVC4,
+  (* Calling check_sat_assuming with no litteral fails with cvc5,
     so it is better to put this verification here *)
   assert (literals <> []) ;
 
@@ -860,124 +831,52 @@ let check_sat_assuming s if_sat if_unsat literals =
     res
 
 
+(* Get value of a single term in the current context *)
+let get_term_value s term =
+
+  let module S = (val s.solver_inst) in
+
+  match prof_get_value s [S.Conv.smtexpr_of_term term] with
+
+  | `Values m -> (
+
+     (* Ignore returned term and get just the value *)
+     let (_, smt_value) = List.hd m in
+
+     let value = S.Conv.term_of_smtexpr smt_value in
+
+     if
+      (* Assignment of integer value to a real term? *)
+      Type.equal_types (Term.type_of_term value) Type.t_int &&
+      Type.equal_types (Term.type_of_term term) Type.t_real
+     then
+       (* Convert integer to real *)
+       (term, Term.mk_to_real value)
+     else
+       (* Keep assignment *)
+       (term, value)
+  )
+  | r -> smt_error s r
+
 (* Get values of terms in the current context *)
 let get_term_values s terms =
 
-  let module S = (val s.solver_inst) in
-
-  match
-    (* Get values of SMT expressions in current context *)
-    prof_get_value s (List.map S.Conv.smtexpr_of_term terms)
-  with
-
-  | `Values m ->
-    values_of_smt_values S.Conv.term_of_smtexpr Term.type_of_term s m
-
-  | r -> smt_error s r
-
-(* In some cases, CVC4 returns syntactically different terms
-   to the ones sent in a get-value query. For instance:
-   Query: ( get-value ((< x 10.0) (>= y 10.5)) )
-   Reply: ( ((< x 10) true) ((>= y (/ 21 2)) false) )
-   To avoid post-processing the terms, a constant is defined
-   and used as an abbreviation for each term.
-   If the term is a single variable, no constant is created.
-*)
-let create_proxy_constants_for_terms s terms =
-
-  let module S = (val s.solver_inst) in
-
-  (* Unique identifier for a get-value constant (UfSymbol)
-
-     NB: UfSymbols are global, but id is the current value of
-     a solver instance counter; type_uf is used to disambiguate
+  (* In some cases, cvc5 returns syntactically different terms
+     to the ones sent in a get-value query. For instance:
+     Query: ( get-value ((< x 10.0) (>= y 10.5)) )
+     Reply: ( ((< x 10) true) ((>= y (/ 21 2)) false) )
+     To avoid post-processing the terms, we send one get-value query
+     at a time.
   *)
-  let mk_gv_name prefix type_uf id =
+  List.map (get_term_value s) terms
 
-    let rec pp_print_type_suffix ppf t = let open Type in
-      match node_of_type t with
-      | Bool -> Format.pp_print_string ppf "bool"
-      | Int -> Format.pp_print_string ppf "int"
-      | UBV i ->
-        begin match i with
-        | 8 -> Format.pp_print_string ppf "uint8"
-        | 16 -> Format.pp_print_string ppf "uint16"
-        | 32 -> Format.pp_print_string ppf "uint32"
-        | 64 -> Format.pp_print_string ppf "uint64"
-        | _ -> raise 
-              (Invalid_argument "pp_print_type_suffix: BV size not allowed")
-        end
-      | BV i ->
-        begin match i with
-        | 8 -> Format.pp_print_string ppf "int8"
-        | 16 -> Format.pp_print_string ppf "int16"
-        | 32 -> Format.pp_print_string ppf "int32"
-        | 64 -> Format.pp_print_string ppf "int64"
-        | _ -> raise 
-              (Invalid_argument "pp_print_type_suffix: BV size not allowed")
-        end
-      | IntRange (i, j, Range) ->
-        Format.fprintf ppf
-          "int_range_%a_%a"
-          Numeral.pp_print_numeral i
-          Numeral.pp_print_numeral j
-      | IntRange (i, j, Enum) ->
-        Format.fprintf ppf
-          "enum_%a_%a"
-          Numeral.pp_print_numeral i
-          Numeral.pp_print_numeral j
-      | Real -> Format.pp_print_string ppf "real"
-      | Array (s, t) ->
-        Format.fprintf ppf
-          "array_%a_%a"
-          pp_print_type_suffix s
-          pp_print_type_suffix t
-      | Abstr s -> Format.pp_print_string ppf s
-    in
-
-    Format.asprintf "%s_%a_%d"
-      prefix
-      pp_print_type_suffix type_uf
-      id
-  in
-
-  terms |> List.map (fun term ->
-    match Term.destruct term with
-    | Term.T.Var _ -> (term, term)
-    | Term.T.Const s when Symbol.is_uf s -> (term, term)
-    | _ -> (
-      let type_expr = term |> Term.type_of_term in
-      let id = s.next_getvalue_id in
-      (* Name of uninterpreted function symbol *)
-      let uf_symbol_name = mk_gv_name "__gv" type_expr id in
-      (* Create or retrieve uninterpreted constant *)
-      let uf_symbol = UfSymbol.mk_uf_symbol uf_symbol_name [] type_expr in
-      s.next_getvalue_id <- s.next_getvalue_id + 1;
-      (* Define an uninterpreted constant *)
-      define_fun s uf_symbol [] (S.Conv.smtexpr_of_term term);
-      (* Return new constant and expression *)
-      (Term.mk_uf uf_symbol [], term)
-    )
-  )
-
-
-let get_term_values_through_proxy_values s = function
-  | [] -> []
-  | proxy_term_alist -> (
-    get_term_values s (List.map fst proxy_term_alist)
-    |> List.map (fun (const, value) ->
-      (List.assq const proxy_term_alist, value)
-    )
-  )
 
 (* Checks satisfiability of the current context, and evaluate one of
    two continuation functions depending on the result *)
 let check_sat_and_get_term_values s if_sat if_unsat terms =
 
-  let proxy_term_alist = create_proxy_constants_for_terms s terms in
-
   if check_sat s then
-    let tv = get_term_values_through_proxy_values s proxy_term_alist in
+    let tv = get_term_values s terms in
     if_sat s tv
   else
     if_unsat s
@@ -987,10 +886,8 @@ let check_sat_and_get_term_values s if_sat if_unsat terms =
    runs if_sat if sat or runs if_unsat if unsat. *)
 let check_sat_assuming_and_get_term_values s if_sat if_unsat literals terms =
 
-  let proxy_term_alist = create_proxy_constants_for_terms s terms in
-
   check_sat_assuming s (fun s ->
-    let tv = get_term_values_through_proxy_values s proxy_term_alist in
+    let tv = get_term_values s terms in
     if_sat s tv
   )
   if_unsat literals
@@ -1044,15 +941,37 @@ let kind s = s.solver_kind
 let get_interpolants solver args =
   let module S = (val solver.solver_inst) in
   
-  match execute_custom_command solver "compute-interpolant" args (List.length args) with
-  | `Custom i ->
-     List.map
-       (fun sexpr ->
-        (S.Conv.term_of_smtexpr
-           (GenericSMTLIBDriver.expr_of_string_sexpr sexpr)))
-       (List.tl i)
+  (* Interpolation is not part of the SMTLIB standard.
+     Until then, we handle each particular case here... *)
+  match solver.solver_kind with
+  | `MathSAT_SMTLIB -> (
+    List.init ((List.length args)-1) (fun i ->
+      let g1, _ = Lib.list_split (i+1) args in
+      let groups = SMTExpr.ArgList g1 in
 
-  | _ (* error_response *) -> []
+      match execute_custom_command solver "get-interpolant" [groups] 1 with
+      | `Custom r -> S.Conv.term_of_smtexpr
+          (GenericSMTLIBDriver.expr_of_string_sexpr (List.hd r))
+      | r -> smt_error solver r
+    )
+  )
+  | `OpenSMT_SMTLIB
+  | `SMTInterpol_SMTLIB -> (
+    match execute_custom_command solver "get-interpolants" args 1 with
+    | `Custom i -> (
+      match (List.hd i) with
+      | HStringSExpr.List sexpr_lst -> (
+        List.map
+          (fun sexpr ->
+            (S.Conv.term_of_smtexpr
+              (GenericSMTLIBDriver.expr_of_string_sexpr sexpr)))
+          sexpr_lst
+      )
+      | _ -> assert false
+    )
+    | _ (* error_response *) -> []
+  )
+  | _ -> failwith ("Interpolating solver not found or unsupported")
 
 
 (* Static hashconsed strings *)
@@ -1143,7 +1062,7 @@ let get_qe_z3 solver expr =
   res
 
 
-let get_qe_cvc4 solver expr =
+let get_qe_cvc5 solver expr =
   let module S = (val solver.solver_inst) in
 
   match execute_custom_command solver "get-qe" [SMTExpr.ArgExpr expr] 1 with
@@ -1157,8 +1076,8 @@ let get_qe_expr solver quantified_expr =
   (* Quantifier elimination is not part of the SMTLIB standard.
      Until then, we handle each particular case here... *)
   match solver.solver_kind with
+  | `cvc5_SMTLIB -> get_qe_cvc5 solver quantified_expr
   | `Z3_SMTLIB -> get_qe_z3 solver quantified_expr
-  | `CVC4_SMTLIB -> get_qe_cvc4 solver quantified_expr
   | _ -> failwith "Quantifier elimination is not supported by SMT solver or \
                    implementation is not available"
 
@@ -1186,7 +1105,7 @@ let simplify_z3 solver expr =
   res
 
 
-let simplify_cvc4 solver expr =
+let simplify_cvc5 solver expr =
   let module S = (val solver.solver_inst) in
 
   match execute_custom_command solver "simplify" [SMTExpr.ArgExpr expr] 1 with
@@ -1200,13 +1119,70 @@ let simplify_expr solver expr =
   (* Simplify is not part of the SMTLIB standard.
      Until then, we handle each particular case here... *)
   match solver.solver_kind with
+  | `cvc5_SMTLIB -> simplify_cvc5 solver expr
   | `Z3_SMTLIB -> simplify_z3 solver expr
-  | `CVC4_SMTLIB -> simplify_cvc4 solver expr
   | _ ->  (S.Conv.term_of_smtexpr expr)
 
 let simplify_term solver term =
   let module S = (val solver.solver_inst) in
   simplify_expr solver (S.Conv.smtexpr_of_term term)
+
+let normalize_if_inconsistent solver term =
+  push solver;
+  assert_term solver term;
+  let term' =
+    if check_sat solver then term
+    else Term.t_false
+  in
+  pop solver;
+  term'  
+  
+let get_qe_interpolants fwd solver groups =
+
+  let get_interpolant solver t1 t2 =
+    let vars =
+      Var.VarSet.diff (Term.vars_of_term t2) (Term.vars_of_term t1)
+      |> Var.VarSet.elements
+    in
+    match vars with
+    | [] -> Term.negate t2 |> simplify_term solver
+    | _ -> (
+      let forall_term = Term.mk_forall vars (Term.negate t2) in
+      get_qe_term solver forall_term
+      |> Term.mk_and
+      |> simplify_term solver
+    )
+  in
+
+  let get_interpolant =
+    if fwd then 
+      (fun s t1 t2 -> get_interpolant s t2 t1 |> Term.negate)
+    else
+      get_interpolant
+  in
+
+  let pairs =
+    List.init ((List.length groups)-1) (fun i ->
+      let g1, g2 = Lib.list_split (i+1) groups in
+      List.rev g1 |> List.hd, g2
+    )
+  in
+  List.fold_left
+    (fun itps (a, b) ->
+      let prev_itp = List.hd itps in
+      let i = get_interpolant solver
+        (Term.mk_and [prev_itp; a])
+        (Term.mk_and b)
+        |> normalize_if_inconsistent solver
+      in
+      let i =
+        try Simplify.simplify_term ~split_eq:true [] i with _ -> i
+      in
+      i :: itps
+    )
+    [Term.t_true]
+    pairs
+  |> List.rev |> List.tl
 
 (* 
    Local Variables:

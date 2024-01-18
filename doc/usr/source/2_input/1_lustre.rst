@@ -8,7 +8,7 @@ Lustre is a functional, synchronous dataflow language. Kind 2 supports most of t
 Properties and top-level node
 -----------------------------
 
-To specify a property to verify in a Lustre node, add the following annotation in the body (\ *i.e.* between keywords ``let`` and ``tel``\ ) of the node:
+To specify an invariant property to verify in a Lustre node, add the following annotation in the body (\ *i.e.* between keywords ``let`` and ``tel``\ ) of the node:
 
 .. code-block:: none
 
@@ -21,6 +21,32 @@ or, use a ``check`` statement:
    check ["<name>"] <bool_expr> ;
 
 where ``<name>`` is an identifier for the property and ``<bool_expr>`` is a Boolean Lustre expression.
+
+In addition to invariant properties, Kind 2 also accepts dedicated syntax for
+checking the existence of a witness.
+You can specify reachability properties of the form:
+
+.. code-block:: none
+
+   --%PROPERTY reachable ["<name>"] <bool_expr> [from <int>] [within <int>];
+
+or, using a ``check`` statement:
+
+.. code-block:: none
+
+   check reachable ["<name>"] <bool_expr> [from <int>] [within <int>];
+
+where the clauses between square brackets are optional.
+The optional clauses allow you to specify, exclusively or at the same time,
+a lower and upper bound on the number of execution steps in the witness trace.
+Concretely, ``check reachable P from m`` asks whether a state satisfying ``P`` is reachable in ``m`` steps or more while
+``check reachable P within n`` asks whether a state satisfying ``P`` is reachable in ``n`` steps or less.
+Moreover, Kind 2 also supports the following syntax for the specification of properties where
+the lower and upper bounds are the same:
+
+.. code-block:: none
+
+   check reachable ["<name>"] <bool_expr> at <int>;
 
 Without modular reasoning active, Kind 2 only analyzes the properties of what it calls the *top nodes*.
 By default, any node that is not depended on by another node (i.e. called by that node) is a top node.
@@ -40,8 +66,8 @@ You can also specify the main node in the command line arguments, with
 
 Main nodes specified by the command line option override main nodes annotated in the source code. If any main nodes exist then only main nodes are analyzed (top nodes are not).
 
-Example
-^^^^^^^
+Examples
+^^^^^^^^
 
 The following example declares two nodes ``greycounter`` and ``intcounter``\ , as well as an *observer* node ``top`` that calls these nodes and verifies that their outputs are the same. The node ``top`` is annotated with ``--%MAIN ;`` which makes it a *main node*. The line ``--%PROPERTY OK;`` means we want to verify that the Boolean stream ``OK`` is always true.
 
@@ -94,11 +120,64 @@ Kind 2 produces the following on standard output when run with the default optio
    --------------------------------------------------------------
    Summary of properties:
    --------------------------------------------------------------
-   OK: valid (at 5)
+   OK: valid (k=5)
    ==============================================================
 
 We can see here that the property ``OK`` has been proven valid for the system (by *k*\ -induction).
 
+The second example demonstrates reachability properties using a single ``counter`` node:
+
+.. code-block:: none
+
+   node counter () returns (out: int);
+   let
+      out = 0 -> pre out + 1;
+
+      check reachable out = 10;
+      check reachable out = 100 from 99;
+      check reachable out = 50 at 50;
+      check reachable out = 15 from 10 within 20;
+
+      check reachable out = 10 within 5;
+   tel
+
+Kind 2 produces output reporting that the first four expressions are reachable, while the last is not.
+If you want to print a witness in the standard output for each proven reachability property,
+pass ``--print_witness true`` to Kind 2. To dump the witness to a file instead,
+pass ``--dump_witness true`` to Kind 2.
+
+Conditional Properties
+^^^^^^^^^^^^^^^^^^^^^^
+
+Invariant properties of a node are often case-based, with each case describing what
+the component should do depending on a specific situation.
+These properties are usually encoded in conditional properties of the form 
+``situation => behavior``, and are often better represented in terms of the mode logic of
+a node (see subsection Modes in :ref:`9_other/2_contract_semantics`).
+However, these properties do not always imply modal behavior, or
+they are not defined in terms of the interface of a node.
+For those cases, Kind 2 allows the user to specify a conditional invariant property 
+of the form ``B => A`` as follows:
+
+.. code-block:: none
+
+   check A provided B;
+
+This dedicated syntax makes writing properties more straightforward and
+user-friendly, but also allows Kind 2 to trigger additional checks.
+A challenge for the user with these kinds of properties arises if the guard ``B``
+may always be false, for example due to a modeling error.
+The user may believe that the property is interesting and true,
+whereas the property is vacuously true.
+
+When the dedicated syntax above is used, Kind 2 simultaneously checks that
+``B => A`` is invariant and ``B`` is reachable. If ``B => A`` is in fact invariant,
+the reachability check lets you know whether the implication is trivially true
+or not. Notice that when running Kind 2 in modular mode, the reachability check is
+performed locally to a node without taking call contexts into account;
+only the specified assumptions are considered.
+You can disable this check by passing ``--check_nonvacuity false`` to Kind 2,
+or by suppressing all reachability checks (``--check_reach false``).
 
 .. _2_input/1_lustre#contracts:
 
@@ -759,7 +838,8 @@ with the same input values provide different output values.
 To prevent this kind of counterexamples from happening, Kind 2 offers an option
 called ``--enforce_func_congruence`` which enforces
 abstract functions to behave as mathematical functions.
-The downside of using this option is that the IC3 engine is forced to
+The downside of using this option is that the IC3QE engine and
+IC3IA engine with the Z3qe or cvc5qe options are forced to
 shut down because its current implementation cannot reason about
 the resulting system.
 
@@ -793,3 +873,205 @@ a linear one.
 Using a function instead of a node simply results in a better abstraction. Kind
 2 will encode, at SMT-level, that the outputs of this component depend on the
 *current* version of its inputs only, not on its previous values.
+
+If statements and frame conditions
+----------------------------------
+Within node definitions, Kind 2 has support for two features that allow the programmer 
+to use a more imperative style-- (1) ``if`` statements and (2) frame conditions. 
+
+If statements
+^^^^^^^^^^^^^
+Kind 2 has always supported conditional expressions of the form ``x = if condition then expr1
+else expr2``, where the ``if/then/else`` expression either evaluates to ``expression1``
+or ``expression2``, depending on the value of ``condition``. However, in some circumstances,
+it may be more natural to use ``if`` statements that serve as control flow (rather than
+evaluate to a value). For example, Kind 2 now supports statements of the form:
+
+.. code-block:: none
+
+   if condition1 then
+      y1 = expr1;
+      y2 = expr2;
+   elsif condition2 then
+      y1 = expr3;
+      y2 = expr4;
+   else
+      y1 = expr5;
+      y2 = expr6;
+   fi
+   
+In the above block, if ``condition1`` is true, then ``y1`` and ``y2`` will be set to ``expr1`` and ``expr2``, respectively. 
+Otherwise, ``y1`` and ``y2`` will be set to either ``expr3`` and ``expr4`` or ``expr5`` and ``expr6``, depending
+on the value of ``condition2``. The ``if`` statement is closed with
+the ``fi`` token. As with other mainstream programming languages, Kind 2 allows for arbitrary nesting of ``if`` statements,
+as well as writing ``if`` statements that do not have any ``else`` or ``elsif`` blocks. 
+
+**Note:** If statements are syntactic sugar for conditional expressions. The ``if`` statement above is equivalent to:
+
+.. code-block:: none
+
+   y1 = if condition1 then expr1 else (if condition2 then expr3 else expr5);
+   y2 = if condition1 then expr2 else (if condition2 then expr4 else expr6);
+
+
+Frame conditions
+^^^^^^^^^^^^^^^^
+Kind 2 also has support for code blocks with frame conditions. At the beginning of the block
+(denoted by the ``frame`` keyword), the user specifies a list of variables that they wish to 
+define within the frame block. All variables defined within the frame block must be present in
+this list. Then, initial values are optionally specified for these variables. 
+Variables are defined within the frame block body (denoted by the ``let`` and ``tel`` keywords).
+It is possible to leave variables (partially or fully) undefined: On the first timestep, each variable
+is set equal to its initialization value, if one exists. On other timesteps, each undefined variable stutters 
+(it is set equal to its value on the previous timestep). 
+
+The following example involves three variables ``y1``, ``y2``, and ``y3``. Since ``y1`` is left
+undefined within the frame block body, it will always be equal to 0 (its initialization
+value). ``y2`` will have value ``100, 0, 1, 2, 3, ...`` because it is set equal to its initialization value (100)
+on the first timestep, but on other timesteps it is set equal to ``counter()``. Even though ``y3`` is fully 
+defined within the frame block (with no unguarded ``pre`` expressions), its initialization value is still used, so it is equal
+to ``5, 1, 2, 3, ...``.
+
+.. code-block:: none
+
+   node example() returns (y1, y2, y3: int);
+   let
+      frame ( y1, y2, y3 )
+      (* Initializations *)
+      y1 = 0; y2 = 100; y3 = 5;
+
+      (* Body *)
+      let
+         y2 = pre counter();
+         y3 = counter();
+      tel
+   tel
+   
+      
+   node counter() returns (y: int);
+   let
+      y = 0 -> pre y + 1;
+   tel
+
+
+Frame conditions are especially useful when combined with the ``if`` statements described in the previous
+subsection, as variables can be left undefined in some branches of the ``if`` statement.
+
+.. code-block:: none
+
+   node example() returns (y1, y2: int);
+   let
+      frame ( y1, y2 )
+      (* Initializations *)
+      y1 = 0; 
+      y2 = 100;
+
+      (* Body *)
+      let
+         if (counter() < 10)
+         then
+            y1 = counter();
+         else
+            y2 = counter() * 2;
+         fi
+      tel
+   tel
+   
+      
+   node counter() returns (y: int);
+   let
+      y = 0 -> pre y + 1;
+   tel
+
+In the above example, ``y1`` is left undefined in the ``else`` branch of the ``if`` statement,
+and ``y2`` is left undefined in the ``then`` branch. ``y1`` is initialized on the first timestep,
+set to be equal to ``counter()`` on the second through tenth timesteps, and then stutters (staying at 9) for the 
+remaining timesteps. On the other hand, ``y2`` starts at its initialization value (100) and 
+stutters there for the first 10 timesteps, and then is set to ``counter() * 2`` for the remaining timesteps.
+
+Note that variables do not have to have initializations. When no initialization is given, 
+a variable's initial value is equal to the initial value of the expression defined in the frame block body.
+If the corresponding expression is undefined in the first timestep, then the variable is also
+undefined in the first timestep. For example, the following code is supported because even though ``y1`` and ``y2`` 
+do not have an initializations, they are present in the list of variables ``frame ( y1, y2 )``.
+The initial value of ``y1`` is 0 (the initial value assigned by ``counter()``), and the initial value
+of ``y2`` is undefined (due to the unguarded ``pre``).
+
+.. code-block:: none
+
+   frame ( y1, y2 )
+   let
+      y1 = counter();
+      y2 = pre counter();
+   tel
+
+   node counter() returns (y: int);
+   let
+      y = 0 -> pre y + 1;
+   tel
+
+Also, it is still possible to assign to multiple variables at once
+(equations of the form ``y1, y2 = (expr1, expr2);``) in either the initializations or the frame block body. 
+
+The frame block semantics may introduce unguarded ``pre`` expressions. For example, the definition of ``y`` in the
+following code block is equivalent to ``y = pre y``. So, Kind 2 will produce two warning messages. The first
+will state that ``y`` is uninitialized in the frame block, and the second will state that there is
+an unguarded ``pre`` (due to this lack of initialization).
+
+.. code-block:: none
+
+   frame ( y )
+   let
+   tel
+
+Similarly, in the following code block, the definitions of ``y1`` and ``y2`` are equivalent to 
+``y1 = if cond then 0 else pre y1`` and ``y2 = if cond then pre y2 else 1``, respectively. This situation (and
+any other situation where the frame block semantics result in the generation of an unguarded ``pre``) 
+will also generate the two warnings as discussed in the previous paragraph.
+
+.. code-block:: none
+
+   frame (y1, y2)
+   let
+      if cond
+      then
+         y1 = 0;
+      else
+         y2 = 1;
+   tel
+
+Restrictions
+^^^^^^^^^^^^
+A frame block cannot be nested within an if statement or another frame block, as
+demonstrated in the following examples:
+
+.. code-block:: none
+
+   if condition
+   then
+      frame ( y1, y2 )
+      y1 = init1; y2 = init2;
+      let
+         y1 = 10;
+      tel
+   fi
+   
+.. code-block:: none
+
+   frame ( y1, y2 )
+   y1 = init1; y2 = init2;
+   let
+      y1 = expr1;
+      frame ( y2 )
+      y2 = init3;
+      let
+         y2 = expr2;
+      tel
+   tel
+
+Assertions, ``MAIN`` annotations, and ``PROPERTY`` annotations also
+cannot be placed within if statements or frame blocks.
+
+Since an initialization only defines a variable at the first timestep, it need not be 
+stateful. Therefore, a frame block initialization cannot contain any ``pre`` or ``->`` 
+operators. This restriction also ensures that initializations are never undefined.

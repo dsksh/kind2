@@ -45,12 +45,18 @@ val bvextract : int -> int -> t -> t
 (** Return input bitvector sign-extended to m bits *)
 val bvsignext : int -> t -> t
 
+(** Extend input bitvector by concatenating m zero bits *)
+val bvzeroext : int -> t -> t
+
 (** Return input bitvectors concatenated together *)
 val bvconcat : t -> t -> t
 
 
 (** {1 Numeral to Unsigned Bitvector}
 @author Arjun Viswanathan *)
+
+(** [num_to_ubv s n] returns size [s] unsigned bitvector converted from numeral [n] *)
+val num_to_ubv : Numeral.t -> Numeral.t -> t
 
 (** Return size 8 unsigned bitvector converted from a numeral *)
 val num_to_ubv8 : Numeral.t -> t
@@ -273,7 +279,7 @@ val bv_arsh : t -> t -> t
 val pp_smtlib_print_bitvector_b : Format.formatter -> t -> unit
 
 (** Pretty-print a bitvector in SMTLIB extended decimal format *)
-val pp_smtlib_print_bitvector_d : Format.formatter -> Numeral.t -> Numeral.t -> unit
+val pp_smtlib_print_bitvector_d : Format.formatter -> t -> unit
 
 (** Pretty-print a constant bitvector in Yices' binary format *)
 val pp_yices_print_bitvector_b : Format.formatter -> t -> unit

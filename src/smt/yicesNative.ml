@@ -104,6 +104,8 @@ let smtlib_string_sexpr_conv =
        s_index = HString.mk_hstring "_";
        s_int2bv = HString.mk_hstring "int2bv";
        s_extract = HString.mk_hstring "extract";
+       s_signext = HString.mk_hstring "sign_extend";
+       s_zeroext = HString.mk_hstring "zero_extend";
        prime_symbol = None;
        s_define_fun = HString.mk_hstring "define-fun";
        s_declare_fun = HString.mk_hstring "declare-fun";
@@ -526,6 +528,7 @@ let ensure_symbol_qf_lira s =
   | `BVEXTRACT _
   | `BVCONCAT
   | `BVSIGNEXT _
+  | `BVZEROEXT _
   | `UINT8_TO_INT
   | `UINT16_TO_INT
   | `UINT32_TO_INT
@@ -1048,6 +1051,9 @@ let get_unsat_core solver =
   | _ -> failwith "Yices: No unsat core to return"
 
 
+let get_unsat_assumptions = get_unsat_core
+
+
 (* Execute a custom command and return the response *)
 let execute_custom_command solver cmd args num_res = 
 
@@ -1167,9 +1173,10 @@ let trace_coms solver_ppf com = match solver_ppf with
 
 (* Create an instance of the solver *)
 let create_instance
-    ?produce_assignments
+    ?produce_models
     ?produce_proofs
-    ?produce_cores
+    ?produce_unsat_cores
+    ?produce_unsat_assumptions
     logic
     id =
 
@@ -1189,9 +1196,10 @@ let create_instance
     YicesDriver.cmd_line
       logic
       0
-      produce_assignments
+      produce_models
       produce_proofs
-      produce_cores
+      produce_unsat_cores
+      produce_unsat_assumptions
       false
       false
   in
@@ -1265,12 +1273,12 @@ let create_instance
     }
   in
 
-  (* Produce assignments to be queried with get-values, default is
+  (* Produce models to be queried with get-values, default is
      false per SMTLIB specification *)
   
   let evidence =
-    (match produce_cores with Some o -> o | None -> false) ||
-    (match produce_assignments with Some o -> o | None -> false)
+    (match produce_unsat_assumptions with Some o -> o | None -> false) ||
+    (match produce_models with Some o -> o | None -> false)
   in
 
   let header_logic solver =
@@ -1376,8 +1384,9 @@ module Create (P : SolverSig.Params) : SolverSig.Inst = struct
   module Conv = Conv
 
   let solver = create_instance
-      ~produce_assignments:P.produce_assignments
-      ~produce_cores:P.produce_cores
+      ~produce_models:P.produce_models
+      ~produce_unsat_cores:P.produce_unsat_cores
+      ~produce_unsat_assumptions:P.produce_unsat_assumptions
       ~produce_proofs:P.produce_proofs
       P.logic P.id
 
@@ -1399,6 +1408,7 @@ module Create (P : SolverSig.Params) : SolverSig.Inst = struct
   let get_value = get_value solver
   let get_model () = get_model solver
   let get_unsat_core () = get_unsat_core solver
+  let get_unsat_assumptions () = get_unsat_assumptions solver
 
 
   let execute_custom_command = execute_custom_command solver

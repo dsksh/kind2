@@ -34,7 +34,7 @@ let pp_print_node ppf
 
   let pp_print_equation = LustreNode.pp_print_node_equation false in
 
-  let pp_print_prop ppf (state_var, name, source) = 
+  let pp_print_prop ppf (state_var, name, source, _) = 
     Format.fprintf
       ppf
       "%a (%s, %a)"

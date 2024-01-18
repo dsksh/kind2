@@ -97,7 +97,7 @@ type 'a ctx = {
 let mk_ctx in_sys param sys =
   let solver =
     Smt.create_instance
-      ~produce_assignments:true
+      ~produce_models:true
       (Sys.get_logic sys)
       (Flags.Smt.solver())
   in
@@ -109,6 +109,8 @@ let mk_ctx in_sys param sys =
     (Smt.declare_fun solver)
     (Smt.declare_sort solver)
     Numeral.zero Numeral.(succ one) ;
+
+  TransSys.assert_global_constraints sys (SMTSolver.assert_term solver) ;
 
   (* Invariants of the system at 0, 1 and 2. *)
   add_all_invariants solver sys ;

@@ -83,9 +83,9 @@ Kind2 allows the following operations over the machine integer types.
 Arithmetic Operations
 ^^^^^^^^^^^^^^^^^^^^^
 
-Addition (``+``), multiplication (``*``), division (``div``), and modulo (``mod``) are binary arithmetic operations, allowed on either signed or unsigned machine integers, and return a machine integer with the same sign and same width as both inputs.
-
-Unary negation (``-``), and binary subtraction (``-``) are allowed only on signed machine integers and return a signed machine integer with the same width as the input(s).
+Addition (``+``), subtraction (``-``), multiplication (``*``), division (``div``), modulo (``mod``), and
+unary negation (``-``) are allowed on either signed or unsigned machine integers, and
+return a machine integer with the same sign and same width as the input(s).
 
 .. code-block::
 
@@ -146,12 +146,14 @@ The following comparison operations are all binary: ``>``, ``<``, ``>=``, ``<=``
 Limitations
 -----------
 
-Currently, only SMT solvers CVC4 and Z3 support logics that allows
+Currently, only SMT solvers cvc5 and Z3 support logics that allows
 the usage of integers and machine integers together. To use any of
 the other supported SMT solvers, the Lustre input must contain only
 machine integers.
 
-When using machine integers, Z3 is required to run
-:ref:`IC3 <1_techniques/4_ic3>`. If Z3 is not available,
-Kind 2 runs with the IC3 model checking engine disabled.
+Moreover, the IC3QE engine requires either cvc5 or Z3,
+and the IC3IA engine requires MathSAT, cvc5, or Z3,
+to run on models with machine integers.
+If these requirements are not satisfied,
+Kind 2 runs with the corresponding IC3 model checking engine disabled.
 

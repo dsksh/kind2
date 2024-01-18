@@ -28,6 +28,7 @@ module LH = LustreAstHelpers
 
 module R = Res
 let (>>=) = R.(>>=)
+let (let*) = Res.(>>=)
 
 type error_kind = Unknown of string
   | FreeIntIdentifier of HString.t
@@ -181,25 +182,23 @@ and eval_bool_binary_op: TC.tc_context -> Lib.position -> LA.binary_operator
   
 and eval_bool_ternary_op: TC.tc_context -> Lib.position -> LA.ternary_operator
                      -> LA.expr -> LA.expr -> LA.expr -> (bool, [> error]) result
-  = fun ctx pos top b1 e1 e2 ->
+  = fun ctx _ top b1 e1 e2 ->
   eval_bool_expr ctx b1 >>= fun c ->
   eval_bool_expr ctx e1 >>= fun v1 ->
   eval_bool_expr ctx e2 >>= fun v2 ->
   match top with
   | LA.Ite -> if c then R.ok v1 else R.ok v2
-  | LA.With -> inline_error pos WidthOperatorUnsupported
 (** try and evalutate ternary op expression to bool, return error otherwise *)
 
 and eval_int_ternary_op: TC.tc_context -> Lib.position -> LA.ternary_operator
                      -> LA.expr -> LA.expr -> LA.expr -> (int, [> error]) result
-  = fun ctx pos top b1 e1 e2 ->
+  = fun ctx _ top b1 e1 e2 ->
   match top with
   | LA.Ite ->
      eval_bool_expr ctx b1 >>= fun c ->
      if c
      then eval_int_expr ctx e1
      else eval_int_expr ctx e2
-  | LA.With -> inline_error pos WidthOperatorUnsupported
 (** try and evalutate ternary op expression to int, return error otherwise *)
 
              
@@ -213,22 +212,26 @@ and eval_comp_op: TC.tc_context -> LA.comparison_operator
   | Neq -> R.ok (v1 <> v2)
   | Lte -> R.ok (v1 <= v2)
   | Lt -> R.ok (v1 < v2)
-  | Gte -> R.ok (v1 > v2)
-  | Gt -> R.ok (v1 >= v2)
+  | Gte -> R.ok (v1 >= v2)
+  | Gt -> R.ok (v1 > v2)
 (** try and evalutate comparison op expression to bool, return error otherwise *)
 
 and simplify_array_index: TC.tc_context -> Lib.position -> LA.expr -> LA.expr -> LA.expr
   = fun ctx pos e1 idx -> 
   let e1' = simplify_expr ctx e1 in
   let idx' = simplify_expr ctx idx in
+  let raise_error () =
+    raise (Out_of_bounds (pos, "Array element access out of bounds."))
+  in
   match e1' with
   | LA.GroupExpr (_, ArrayExpr, es) ->
      (match (eval_int_expr ctx idx) with
-      | Ok i -> if List.length es > i
-                then List.nth es i
-                else
-                  (raise (Out_of_bounds (pos, "Array element access out of bounds.")))
+      | Ok i -> if List.length es > i then List.nth es i else raise_error ()
       | Error _ -> LA.ArrayIndex (pos, e1', idx'))
+  | LA.ArrayConstr (_, v, s) ->
+     (match (eval_int_expr ctx idx), (eval_int_expr ctx s) with
+     | Ok i, Ok j -> if j > i then v else raise_error ()
+     | _, _ -> LA.ArrayIndex (pos, e1', idx'))
   | _ ->
     ArrayIndex (pos, e1', idx')
 (** picks out the idx'th component of an array if it can *)
@@ -242,20 +245,53 @@ and simplify_tuple_proj: TC.tc_context -> Lib.position -> LA.expr -> int -> LA.e
      else (raise (Out_of_bounds (pos, "Tuple element access out of bounds.")))
   | _ -> TupleProject (pos, e1, idx)
 (** picks out the idx'th component of a tuple if it is possible *)
-       
+
+and push_pre is_guarded pos =
+  let r e = push_pre is_guarded pos e in
+  function
+  | LA.Ident _ as e -> LA.Pre (pos, e)
+  | ModeRef _ as e -> LA.Pre (pos, e)
+  | RecordProject (p, e, i) -> RecordProject (p, r e, i)
+  | TupleProject (p, e, i) -> TupleProject (p, r e, i)
+  | Const _ as e -> if is_guarded then e else Pre (pos, e)
+  | UnaryOp (p, op, e) -> UnaryOp (p, op, r e)
+  | BinaryOp (p, op, e1, e2) -> BinaryOp (p, op, r e1, r e2)
+  | TernaryOp (p, Ite, e1, e2, e3) -> TernaryOp (p, Ite, e1, r e2, r e3)
+  | ConvOp (p, op, e) -> ConvOp (p, op, r e)
+  | CompOp (p, op, e1, e2) -> CompOp (p, op, r e1, r e2)
+  | RecordExpr (p, i, es) ->
+    let es' = List.map (fun (i, e) -> (i, r e)) es in
+    RecordExpr (p, i, es')
+  | GroupExpr (p, op, es) ->
+    let es' = List.map (fun e -> r e) es in
+    GroupExpr (p, op, es')
+  | StructUpdate (p, e1, l, e2) -> StructUpdate (p, r e1, l, r e2)
+  | ArrayConstr (p, e1, e2) -> ArrayConstr (p, r e1, e2)
+  | ArrayIndex (p, e1, e2) -> ArrayIndex (p, r e1, e2)
+  | Quantifier (p, e1, l, e2) -> Quantifier (p, e1, l, r e2)
+  | AnyOp _ -> assert false (* desugared in lustreDesugarAnyOps *)
+  | When _ as e -> LA.Pre (pos, e)
+  | Condact _ as e -> LA.Pre (pos, e)
+  | Activate _ as e -> LA.Pre (pos, e)
+  | Merge _ as e -> LA.Pre (pos, e)
+  | RestartEvery _ as e -> LA.Pre (pos, e)
+  | Pre _ as e -> LA.Pre (pos, e)
+  | Arrow _ as e -> LA.Pre (pos, e)
+  | Call _ as e -> LA.Pre (pos, e)
+
 and simplify_expr ?(is_guarded = false) ctx =
   function
   | LA.Const _ as c -> c
-  | LA.Ident (pos, i) ->
+  | LA.Ident (_, i) as ident ->
      (match (TC.lookup_const ctx i) with
       | Some (const_expr, _) ->
          (match const_expr with
           | LA.Ident (_, i') as ident' ->
              if HString.compare i i' = 0 (* If This is a free constant *)
-             then ident' 
+             then ident
              else simplify_expr ~is_guarded ctx ident'
           | _ -> simplify_expr ~is_guarded ctx const_expr)
-      | None -> LA.Ident (pos, i))
+      | None -> ident)
   | LA.UnaryOp (pos, op, e1) ->
     let e1' = simplify_expr ~is_guarded ctx e1 in
     let e' = LA.UnaryOp (pos, op, e1') in
@@ -270,7 +306,10 @@ and simplify_expr ?(is_guarded = false) ctx =
   | LA.Pre (pos, e) ->
     let e' = simplify_expr ~is_guarded:false ctx e in
     if is_guarded && LH.expr_is_const e' then e'
-    else Pre (pos, e')
+    else
+      if Flags.lus_push_pre ()
+      then push_pre is_guarded pos e'
+      else Pre (pos, e')
   | Arrow (pos, e1, e2) ->
     let e1' = simplify_expr ~is_guarded ctx e1 in
     let e2' = simplify_expr ~is_guarded:true ctx e2 in
@@ -292,8 +331,7 @@ and simplify_expr ?(is_guarded = false) ctx =
           let cond' = simplify_expr ~is_guarded ctx cond in
           let e1' = simplify_expr ~is_guarded ctx e1 in
           let e2' = simplify_expr ~is_guarded ctx e2 in
-            TernaryOp (pos, top, cond', e1', e2'))
-     | _ -> Lib.todo __LOC__)
+            TernaryOp (pos, top, cond', e1', e2')))
   | LA.CompOp (pos, cop, e1, e2) ->
      let e1' = simplify_expr ~is_guarded ctx e1 in
      let e2' = simplify_expr ~is_guarded ctx e2 in
@@ -310,16 +348,11 @@ and simplify_expr ?(is_guarded = false) ctx =
   | LA.ArrayConstr (pos, e1, e2) ->
      let e1' = simplify_expr ~is_guarded ctx e1 in
      let e2' = simplify_expr ~is_guarded ctx e2 in
-     let e' = LA.ArrayConstr (pos, e1', e2') in
-     (match (eval_int_expr ctx e2) with
+     let e' = LA.ArrayConstr (pos, e1', e2') in e'
+     (*(match (eval_int_expr ctx e2) with
       | Ok size -> LA.GroupExpr (pos, LA.ArrayExpr, Lib.list_init (fun _ -> e1') size)
-      | Error _ -> e')
+      | Error _ -> e')*)
   | LA.ArrayIndex (pos, e1, e2) -> simplify_array_index ctx pos e1 e2
-  | LA.ArrayConcat (pos, e1, e2) as e->
-     (match (simplify_expr ~is_guarded ctx e1, simplify_expr ~is_guarded ctx e2) with
-      | LA.GroupExpr (_, LA.ArrayExpr, es1), LA.GroupExpr (_, LA.ArrayExpr, es2) ->
-         LA.GroupExpr(pos, LA.ArrayExpr, es1 @ es2)
-      | _ -> e)
   | LA.TupleProject (pos, e1, e2) -> simplify_tuple_proj ctx pos e1 e2  
   | Call (pos, i, es) ->
     let es' = List.map (fun e -> simplify_expr ~is_guarded:false ctx e) es in
@@ -330,8 +363,12 @@ and simplify_expr ?(is_guarded = false) ctx =
 
 let rec inline_constants_of_lustre_type ctx = function
   | LA.IntRange (pos, lbound, ubound) ->
-    let lbound' = simplify_expr ctx lbound in
-    let ubound' = simplify_expr ctx ubound in
+    let lbound' = match lbound with 
+      | None -> None
+      | Some lbound -> Some (simplify_expr ctx lbound) in
+    let ubound' = match ubound with
+      | None -> None
+      | Some ubound -> Some (simplify_expr ctx ubound) in
     LA.IntRange (pos, lbound', ubound')
   | LA.TupleType (pos, types) ->
     let types' = List.map (fun t -> inline_constants_of_lustre_type ctx t) types in
@@ -406,13 +443,17 @@ let rec inline_constants_of_node_items: TC.tc_context -> LA.node_item list -> LA
   -> function
   | [] -> []
   | (Body b) :: items ->
-     (Body (inline_constants_of_node_equation ctx b))
-     :: inline_constants_of_node_items ctx items
-  | (AnnotProperty (pos, n, e)) :: items ->
-     (AnnotProperty (pos, n, simplify_expr ctx e))
-     :: inline_constants_of_node_items ctx items
-  | (AnnotMain b) :: items
-    -> (AnnotMain b) :: inline_constants_of_node_items ctx items
+    (Body (inline_constants_of_node_equation ctx b))
+    :: inline_constants_of_node_items ctx items
+  (* shouldn't be possible *)
+  | (IfBlock _) :: _ 
+  | (FrameBlock _) :: _ ->
+    assert false
+  | (AnnotProperty (pos, n, e, k)) :: items ->
+    (AnnotProperty (pos, n, simplify_expr ctx e, k))
+    :: inline_constants_of_node_items ctx items
+  | (AnnotMain (pos, b)) :: items
+    -> (AnnotMain (pos, b)) :: inline_constants_of_node_items ctx items
 
 let rec inline_constants_of_contract: TC.tc_context -> LA.contract -> LA.contract =
   fun ctx ->
@@ -427,14 +468,8 @@ let rec inline_constants_of_contract: TC.tc_context -> LA.contract -> LA.contrac
   | (LA.GhostConst (TypedConst (pos', i, e, ty))) :: others ->
      (LA.GhostConst (TypedConst (pos', i, simplify_expr ctx e, ty)))
      :: inline_constants_of_contract ctx others 
-  | (LA.GhostVar (FreeConst (pos, i, ty))) :: others ->
-     (LA.GhostVar (FreeConst (pos, i, ty)))
-     :: inline_constants_of_contract ctx others 
-  | (LA.GhostVar (UntypedConst (pos, i, e))) :: others ->
-     (LA.GhostVar (UntypedConst (pos, i, simplify_expr ctx e)))
-     :: inline_constants_of_contract ctx others 
-  | (LA.GhostVar (TypedConst (pos', i, e, ty))) :: others ->
-     (LA.GhostVar (TypedConst (pos', i, simplify_expr ctx e, ty)))
+  | (LA.GhostVars (pos, lhs, e)) :: others ->
+    (LA.GhostVars (pos, lhs, simplify_expr ctx e))
      :: inline_constants_of_contract ctx others 
   | (LA.Assume (pos, n, b, e)) :: others ->
      (LA.Assume (pos, n, b, simplify_expr ctx e))
@@ -454,8 +489,10 @@ let substitute: TC.tc_context -> LA.declaration -> (TC.tc_context * LA.declarati
   function
   | TypeDecl (span, AliasType (pos, i, t)) ->
     let t' = inline_constants_of_lustre_type ctx t in
-    ctx, LA.TypeDecl (span, AliasType (pos, i, t'))
-  | ConstDecl (_, FreeConst _) as c -> (ctx, c)
+    TC.add_ty_syn ctx i t', LA.TypeDecl (span, AliasType (pos, i, t'))
+  | ConstDecl (span, FreeConst (pos, id, ty)) ->
+    let ty' = inline_constants_of_lustre_type ctx ty in
+    ctx, ConstDecl (span, FreeConst (pos, id, ty'))
   | ConstDecl (span, UntypedConst (pos', i, e)) ->
     let e' = simplify_expr ctx e in
     (match (TC.lookup_ty ctx i) with
@@ -464,11 +501,13 @@ let substitute: TC.tc_context -> LA.declaration -> (TC.tc_context * LA.declarati
           , ConstDecl (span, UntypedConst (pos', i, e')))
       | Some ty ->
         let ty' = inline_constants_of_lustre_type ctx ty in
-        (TC.add_const ctx i e' ty', ConstDecl (span, UntypedConst (pos', i, e'))))
+        let ctx' = TC.add_ty (TC.add_const ctx i e' ty') i ty' in
+        (ctx', ConstDecl (span, UntypedConst (pos', i, e'))))
   | ConstDecl (span, TypedConst (pos', i, e, ty)) ->
     let ty' = inline_constants_of_lustre_type ctx ty in
-    let e' = simplify_expr ctx e in 
-    (TC.add_const ctx i e' ty', ConstDecl (span, TypedConst (pos', i, e', ty')))
+    let e' = simplify_expr ctx e in
+    let ctx' = TC.add_ty (TC.add_const ctx i e' ty') i ty' in
+    (ctx', ConstDecl (span, TypedConst (pos', i, e', ty')))
   | (LA.NodeDecl (span, (i, imported, params, ips, ops, ldecls, items, contract))) ->
     let ips' = inline_constants_of_const_clocked_type_decl ctx ips in
     let ops' = inline_constants_of_clocked_type_decl ctx ops in
@@ -494,13 +533,13 @@ let substitute: TC.tc_context -> LA.declaration -> (TC.tc_context * LA.declarati
   | e -> (ctx, e)
 (** propogate constants post type checking into the AST and constant store*)
 
-
-let rec inline_constants: TC.tc_context -> LA.t -> ((TC.tc_context * LA.t), [> error]) result = fun ctx ->
-  function
+let rec inline_constants: TC.tc_context -> LA.t -> ((TC.tc_context * LA.t), [> error]) result = fun ctx decl ->
+  match decl with
   | [] -> R.ok (ctx, [])
   | c :: rest ->
-     (try R.ok (substitute ctx c) with
-      | Out_of_bounds (pos, err) -> inline_error pos (OutOfBounds err)) >>= fun (ctx', c') ->
-     inline_constants ctx' rest >>= fun (ctx'', decls) -> 
-     R.ok (ctx'', c'::decls)
+    let* (ctx', c') = (try R.ok (substitute ctx c) with
+      | Out_of_bounds (pos, err) -> 
+        inline_error pos (OutOfBounds err)) in
+    let* (ctx'', decls) = inline_constants ctx' rest in
+    R.ok (ctx'', c'::decls)
 (** Best effort at inlining constants *)

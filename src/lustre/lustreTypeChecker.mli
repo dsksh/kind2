@@ -29,15 +29,17 @@ type error_kind = Unknown of string
   | MergeCaseNotUnique of HString.t
   | UnboundIdentifier of HString.t
   | UnboundModeReference of HString.t
-  | MissingRecordField of HString.t
+  | UnboundNodeName of HString.t
+  | NotAFieldOfRecord of HString.t
+  | NoValueForRecordField of HString.t
   | IlltypedRecordProjection of tc_type
-  | MissingTupleField of int * tc_type
+  | TupleIndexOutOfBounds of int * tc_type
   | IlltypedTupleProjection of tc_type
   | UnequalIteBranchTypes of tc_type * tc_type
   | ExpectedBooleanExpression of tc_type
+  | ExpectedIntegerExpression of tc_type
   | Unsupported of string
   | UnequalArrayExpressionType
-  | ExpectedNumeralArrayBound
   | TypeMismatchOfRecordLabel of HString.t * tc_type * tc_type
   | IlltypedRecordUpdate of tc_type
   | ExpectedLabel of LA.expr
@@ -63,22 +65,20 @@ type error_kind = Unknown of string
   | ExpectedIntegerTypes of tc_type * tc_type
   | ExpectedNumberTypes of tc_type * tc_type
   | ExpectedMachineIntegerTypes of tc_type * tc_type
-  | ExpectedBitShiftConstant
   | ExpectedBitShiftConstantOfSameWidth of tc_type
   | ExpectedBitShiftMachineIntegerType of tc_type
   | InvalidConversion of tc_type * tc_type
   | NodeArgumentOnLHS of HString.t
-  | NodeInputOutputShareIdentifier of ty_set
   | MismatchOfEquationType of LA.struct_item list option * tc_type
   | DisallowedReassignment of ty_set
-  | DisallowedSubrangeInContractReturn of bool * HString.t * tc_type
   | AssumptionMustBeInputOrOutput of HString.t
   | Redeclaration of HString.t
-  | ExpectedConstant of LA.expr
-  | ArrayBoundsInvalidExpression
+  | ExpectedConstant of string * string
   | UndeclaredType of HString.t
   | EmptySubrange of int * int
   | SubrangeArgumentMustBeConstantInteger of LA.expr
+  | IntervalMustHaveBound
+  | ExpectedRecordType of tc_type
 
 type error = [
   | `LustreTypeCheckerError of Lib.position * error_kind
@@ -103,8 +103,21 @@ val tc_ctx_of_contract: ?ignore_modes:bool -> tc_context -> LA.contract -> (tc_c
 
 val local_var_binding: tc_context -> LA.node_local_decl -> (tc_context, [> error]) result
 
+val get_node_ctx : tc_context ->
+  'a * 'b * 'c * LA.const_clocked_typed_decl list *
+  LA.clocked_typed_decl list * LA.node_local_decl list * 'd * 'e ->
+  (tc_context, [> error ]) result
+  
+val build_node_fun_ty : Lib.position ->
+  tc_context ->
+  LA.const_clocked_typed_decl list ->
+  LA.clocked_typed_decl list -> (tc_type, [> error ]) result
+
 val infer_type_expr: tc_context -> LA.expr -> (tc_type, [> error]) result
 (** Infer type of Lustre expression given a typing context *)
+
+val eq_lustre_type : tc_context -> LA.lustre_type -> LA.lustre_type -> (bool, [> error]) result
+(** Check if two lustre types are equal *)
 
 (* 
    Local Variables:

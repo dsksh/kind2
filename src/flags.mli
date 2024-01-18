@@ -119,6 +119,9 @@ You can now add modules following the instructions in the previous section.
 
 exception Error
 
+exception SolverNotFound
+exception UnsupportedSolver
+
 (** {1 Accessors for flags} *)
 
 
@@ -162,14 +165,29 @@ val log_invs : unit -> bool
 (** Prints invariants **)
 val print_invs : unit -> bool
 
-(** Dump counterexample to a file **)
+(** Print counterexamples **)
+val print_cex : unit -> bool
+
+(** Print witnesses **)
+val print_witness : unit -> bool
+
+(** Dump counterexample to disproven invariant property to a file **)
 val dump_cex : unit -> bool
+
+(** Set whether dumping counterexamples *)
+val set_dump_cex : bool -> unit
+
+(** Dump witness of proven reachability property to a file **)
+val dump_witness : unit -> bool
 
 (** Debug sections to enable *)
 val debug : unit -> string list
 
 (** Logfile for debug output  *)
 val debug_log : unit -> string option
+
+type exit_code_convention = [`RESULTS_AND_ERRORS | `ONLY_ERRORS]
+val exit_code_mode : unit -> exit_code_convention
 
 (** Verbosity level *)
 val log_level : unit -> Lib.log_level
@@ -192,9 +210,6 @@ type enable = Lib.kind_module list
 (** Only parse the Lustre program. No analysis is performed. *)
 val only_parse : unit -> bool
 
-(** Provide AST info for language-servers. *)
-val lsp : unit -> bool
-
 (** Use the old Lustre front-end. *)
 val old_frontend : unit -> bool
 
@@ -213,6 +228,12 @@ val modular : unit -> bool
 (** Node slicing *)
 val slice_nodes : unit -> bool
 
+(** Check reachability properties *)
+val check_reach : unit -> bool
+
+(** Check non-vacuity of contract modes and conditional properties *)
+val check_nonvacuity : unit -> bool
+
 (** Check properties of subnodes *)
 val check_subproperties : unit -> bool
 
@@ -221,6 +242,9 @@ val lus_strict : unit -> bool
 
 (** Activates compilation to Rust. *)
 val lus_compile : unit -> bool
+
+(** Activates transformation that pushes pre expressions *)
+val lus_push_pre : unit -> bool
 
 (** Colored output. *)
 val color : unit -> bool
@@ -239,12 +263,14 @@ module Smt : sig
 
   (** Legal SMT solvers. *)
   type solver = [
+    | `Bitwuzla_SMTLIB
+    | `cvc5_SMTLIB
     | `MathSAT_SMTLIB
-    | `Boolector_SMTLIB
-    | `Z3_SMTLIB
-    | `CVC4_SMTLIB
-    | `Yices_SMTLIB
+    | `OpenSMT_SMTLIB
+    | `SMTInterpol_SMTLIB
+    | `Yices2_SMTLIB
     | `Yices_native
+    | `Z3_SMTLIB
     | `detect
   ]
 
@@ -255,16 +281,33 @@ module Smt : sig
   val solver : unit -> solver
 
   type qe_solver = [
+    | `cvc5_SMTLIB
     | `Z3_SMTLIB
-    | `CVC4_SMTLIB
     | `detect
   ]
 
-  (** Set SMT solver for QE and executable *)
+  (** Set SMT solver for QE *)
   val set_qe_solver : qe_solver -> unit
 
   (** Which SMT solver for QE to use. *)
   val qe_solver : unit -> qe_solver
+
+  type itp_solver = [
+    | `cvc5_QE
+    | `MathSAT_SMTLIB
+    | `OpenSMT_SMTLIB
+    | `SMTInterpol_SMTLIB
+    | `Z3_QE
+    | `detect
+  ]
+
+  (** Set SMT solver for interpolation *)
+  val set_itp_solver : itp_solver -> unit
+
+  (** Which SMT solver for interpolation to use. *)
+  val itp_solver : unit -> itp_solver
+
+  val get_itp_solver : unit -> solver
 
   (** Use check-sat with assumptions, or simulate with push/pop *)
   val check_sat_assume : unit -> bool
@@ -277,11 +320,31 @@ module Smt : sig
   (** Change sending of short names to SMT solver *)
   val set_short_names : bool -> unit
 
+  (** Executable of Bitwuzla solver *)
+  val bitwuzla_bin : unit -> string
+
+  (** Executable of cvc5 solver *)
+  val cvc5_bin : unit -> string
+
   (** Executable of MathSAT solver *)
   val mathsat_bin : unit -> string
 
-  (** Executable of Boolector solver *)
-  val boolector_bin : unit -> string
+  (** Executable of OpenSMT solver *)
+  val opensmt_bin : unit -> string
+
+  (** JAR of SMTInterpol solver *)
+  val smtinterpol_jar : unit -> string
+
+  (** Executable of Yices2 SMT2 solver *)
+  val yices2smt2_bin : unit -> string
+
+  (** Yices 2 binary supports models in SMT2 format **)
+  val yices2_smt2models : unit -> bool
+
+  val set_yices2_smt2models : bool -> unit
+
+  (** Executable of Yices solver *)
+  val yices_bin : unit -> string
 
   (** Executable of Z3 solver *)
   val z3_bin : unit -> string
@@ -291,30 +354,6 @@ module Smt : sig
 
   (** Specify if Z3 qe-light strategy should be used in addition to qe *)
   val set_z3_qe_light : bool -> unit
-
-  (** Executable of CVC4 solver *)
-  val cvc4_bin : unit -> string
-
-  (** CVC4 binary requires --rewrite-divk flag *)
-  val cvc4_rewrite_divk : unit -> bool
-
-  val set_cvc4_rewrite_divk : bool -> unit
-
-  (** CVC4 binary requires --bv-print-consts-in-binary flag *)
-  val cvc4_bv_consts_in_binary : unit -> bool
-
-  val set_cvc4_bv_consts_in_binary : bool -> unit
-
-  (** Executable of Yices solver *)
-  val yices_bin : unit -> string
-
-  (** Executable of Yices2 SMT2 solver *)
-  val yices2smt2_bin : unit -> string
-
-  (** Yices 2 binary supports models in SMT2 format **)
-  val yices2_smt2models : unit -> bool
-
-  val set_yices2_smt2models : bool -> unit
 
   (** Forces SMT traces. *)
   val set_trace: bool -> unit
@@ -343,7 +382,7 @@ module BmcKind : sig
   val check_unroll : unit -> bool
 
   (** Print counterexamples to induction. *)
-  val print_cex : unit -> bool
+  val ind_print_cex : unit -> bool
 
   (** Compress inductive counterexample. *)
   val compress : unit -> bool
@@ -364,8 +403,8 @@ module BmcKind : sig
 end
 
 
-(** {2 IC3 flags} *)
-module IC3 : sig
+(** {2 IC3QE flags} *)
+module IC3QE : sig
 
   (** Check inductiveness of blocking clauses. *)
   val check_inductive : unit -> bool
@@ -394,11 +433,18 @@ module IC3 : sig
   (** Use invariants from invariant generators. *)
   val use_invgen : unit -> bool
 
-  (** Legal abstraction mechanisms for in IC3. *)
+  (** DEPRECATED: Legal abstraction mechanisms for in IC3. *)
   type abstr = [ `None | `IA ]
 
-  (** Abstraction mechanism IC3 should use. *)
+  (** DEPRECATED: Abstraction mechanism IC3 should use. *)
   val abstr : unit -> abstr
+end
+
+(** {2 IC3IA flags} *)
+module IC3IA : sig
+
+  val max_processes : unit -> int
+  
 end
 
 (** {2 QE flags} *)
@@ -472,8 +518,14 @@ module Contracts : sig
   (** Print deadlocking trace and a conflict *)
   val print_deadlock : unit -> bool
 
+  (** Dump deadlocking trace to a file **)
+  val dump_deadlock : unit -> bool
+
   (** Check whether a unrealizable contract is satisfiable *)
   val check_contract_is_sat : unit -> bool
+
+  (* Print set of viable states as a lustre-like constraint *)
+  val print_viable_states : unit -> bool
 end
 
 
@@ -492,8 +544,11 @@ module Certif : sig
   (** Proof production. *)
   val proof : unit -> bool
 
-  (** Use abstract type indexes in certificates/proofs. *)
-  val abstr : unit -> bool
+  (** Reduce the size of trusted holes. *)
+  val smaller_holes : unit -> bool
+
+  (** Breakdown proof into smaller steps. *)
+  val flatten_proof : unit -> bool
 
   (** Log trusted parts of proofs. *)
   val log_trust : unit -> bool
@@ -599,7 +654,7 @@ module MCS : sig
   val print_mcs_legacy : unit -> bool
 
   (** Print the counterexample found for each MCS *)
-  val print_mcs_counterexample : unit -> bool
+  val print_mcs_cex : unit -> bool
 
   (** If true, compute MCS over elements of the main node only *)
   val mcs_only_main_node : unit -> bool
@@ -711,6 +766,17 @@ module Interpreter : sig
   (** Run number of steps, override the number of steps given in the input
     file. *)
   val steps : unit -> int
+end
+
+(** {2 LSP flags} *)
+module Lsp : sig
+
+  (** Provide AST info for language-servers. *)
+  val lsp : unit -> bool
+
+  (** Provide fake filepath for error messages. *)
+  val fake_filepath : unit -> string
+
 end
 
 

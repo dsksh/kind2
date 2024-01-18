@@ -436,7 +436,7 @@ let rec eval_ast_expr bounds ctx =
               with Invalid_argument _ -> true
             in*)
             if (*not (N.has_state_var_a_proper_def sv)*) (*is_a_def*) not (StateVar.is_input sv)
-            then N.add_state_var_def sv (N.GeneratedEq (pos, index)) ;
+            then N.add_state_var_def sv ~is_dep:true (N.GeneratedEq (pos, index)) ;
             res
            in
            let expr', ctx =
@@ -1136,7 +1136,7 @@ let rec eval_ast_expr bounds ctx =
                let (state_var, _) , ctx = 
                  C.mk_local_for_expr ~bounds:[bound] pos ctx e in
                if not (StateVar.is_input state_var)
-               then N.add_state_var_def state_var (N.GeneratedEq (H.pos_of_expr expr, j)) ;
+               then N.add_state_var_def ~is_dep:true state_var (N.GeneratedEq (H.pos_of_expr expr, j)) ;
                let e' = E.mk_var state_var in
                D.add (D.ArrayVarIndex array_size :: j) e' a, ctx)
         expr'
@@ -1238,37 +1238,11 @@ let rec eval_ast_expr bounds ctx =
 
       push expr', ctx
 
-
-  (* Array slice [A[i..j,k..l]] *)
-  | A.ArraySlice (pos, _, _) -> 
-
-    fail_at_position pos "Array slices not implemented"
-
   (* ****************************************************************** *)
   (* Not implemented                                                    *)
   (* ****************************************************************** *)
 
   (* TODO below, roughly in order of importance and difficulty *)
-
-  (* Concatenation of arrays [A|B] *)
-  | A.ArrayConcat (pos, _, _) -> 
-
-    fail_at_position pos "Array concatenation not implemented"
-
-  (* Interpolation to base clock *)
-  | A.Current (pos, A.When (_, _, _)) -> 
-
-    fail_at_position pos "Current expression not supported"
-
-  (* Boolean at-most-one constaint *)
-  | A.NArityOp (pos, A.OneHot, _) -> 
-
-    fail_at_position pos "One-hot expression not supported"
-
-  (* Followed by operator *)
-  | A.Fby (pos, _, _, _) -> 
-
-    fail_at_position pos "Fby operator not implemented" 
 
   (* Projection on clock *)
   | A.When (pos, _, _) -> 
@@ -1278,27 +1252,15 @@ let rec eval_ast_expr bounds ctx =
       "When expression must be the argument of a merge operator"
 
   (* Interpolation to base clock *)
-  | A.Current (pos, _) -> 
-
-    fail_at_position 
-      pos
-      "Current operator must have a when expression as argument"
-
   | A.Activate (pos, _, _, _, _) -> 
 
     fail_at_position 
       pos
       "Activate operator only supported in merge"
 
-  (* With operator for recursive node calls *)
-  | A.TernaryOp (pos, A.With, _, _, _) -> 
-
-    fail_at_position pos "Recursive nodes not supported"
-
-  (* Node call to a parametric node *)
-  | A.CallParam (pos, _, _, _) -> 
-
-    fail_at_position pos "Parametric nodes not supported" 
+  | A.AnyOp (pos, _, _, _) -> 
+    
+    fail_at_position pos "'Any' operation not supported in old front end"
 
 
 
@@ -1586,15 +1548,6 @@ and eval_binary_ast_expr bounds ctx pos mk expr1 expr2 =
              A.pp_print_expr expr1
              A.pp_print_expr expr2)
 
-      | E.NonConstantShiftOperand ->
-
-        fail_at_position
-          pos
-          (Format.asprintf
-             "Second argument %a to shift operation 
-              must be constant"
-              A.pp_print_expr expr2)
-
   in
 
   (res, ctx)
@@ -1782,7 +1735,7 @@ and eval_node_call
             in
             Format.printf "%a %a %b\n" StateVar.pp_print_state_var state_var' Lib.pp_print_pos pos' is_a_def ;*)
             if (*not (N.has_state_var_a_proper_def state_var')*) (*is_a_def*) not (StateVar.is_input state_var')
-            then N.add_state_var_def state_var' (N.GeneratedEq (pos',i')) ;
+            then N.add_state_var_def ~is_dep:true state_var' (N.GeneratedEq (pos',i')) ;
             let ctx =
               C.current_node_map ctx (
                 fun node ->
@@ -2168,7 +2121,7 @@ and eval_ast_type_flatten flatten_arrays ctx = function
      TODO: should allow constant node arguments as bounds, but then
      we'd have to check if in each node call the lower bound is less
      than or equal to the upper bound. *)
-  | A.IntRange (pos, lbound, ubound) as t -> 
+  | A.IntRange (pos, Some lbound, Some ubound) as t -> 
 
     (* Evaluate expressions for bounds to constants *)
     let const_lbound, const_ubound = 
@@ -2181,8 +2134,17 @@ and eval_ast_type_flatten flatten_arrays ctx = function
         (Format.asprintf "Invalid range %a" A.pp_print_lustre_type t);
     
     (* Add to empty trie with empty index *)
-    D.singleton D.empty_index (Type.mk_int_range const_lbound const_ubound)
+    D.singleton D.empty_index (Type.mk_int_range (Some const_lbound) (Some const_ubound))
 
+  | A.IntRange (pos, Some lbound, None) ->
+    let const_lbound = const_int_of_ast_expr ctx pos lbound in 
+    D.singleton D.empty_index (Type.mk_int_range (Some const_lbound) None)
+
+  | A.IntRange (pos, None, Some ubound) ->
+    let const_ubound = const_int_of_ast_expr ctx pos ubound in 
+    D.singleton D.empty_index (Type.mk_int_range None (Some const_ubound))
+
+  | A.IntRange (_, None, None) -> D.singleton D.empty_index (Type.mk_int_range None None)
 
   (* Enum type needs to be constructed *)
   | A.EnumType (_, enum_name, enum_elements) -> 
@@ -2306,7 +2268,7 @@ and eval_ast_type_flatten flatten_arrays ctx = function
            D.add (j @ [D.ArrayVarIndex array_size])
              (Type.mk_array t
                 (if E.is_numeral array_size then
-                   Type.mk_int_range Numeral.zero (E.numeral_of_expr array_size)
+                   Type.mk_int_range (Some Numeral.zero) (Some (E.numeral_of_expr array_size))
                  else Type.t_int))
              a)
         element_type
@@ -2375,7 +2337,7 @@ let main () =
           pos_fname
           (Lexing.lexeme lexbuf);
 
-        exit 1
+        exit ExitCodes.parse_error
 
   in
 

@@ -240,8 +240,9 @@ let keyword_table = mk_hashtbl [
   "struct", STRUCT ;
   "enum", ENUM ;
 
-  (* Constant declaration *)
+  (* Constant/parameter declaration *)
   "const", CONST ;
+  "param", PARAM ;
   
   (* Node / function declaration *)
   "imported", IMPORTED ;
@@ -257,6 +258,12 @@ let keyword_table = mk_hashtbl [
 
   (* Check *)
   "check", CHECK ;
+  "reachable", REACHABLE ;
+  "invariant", INVARIANT ;
+  "provided", PROVIDED ;
+  "from", FROM ;
+  "at", AT ;
+  "within", WITHIN ;
 
   (* Contract related things. *)
   "contract", CONTRACT ;
@@ -272,8 +279,11 @@ let keyword_table = mk_hashtbl [
   "exists", EXISTS ;
   "or", OR ;
   "if", IF ;
+  "fi", FI ;
+  "frame", FRAME ; 
   "then", THEN ;
   "else", ELSE ;
+  "elsif", ELSIF ;
   "with", WITH ;
   "div", INTDIV ;
   "mod", MOD ;
@@ -445,7 +455,6 @@ rule token = parse
   | '}' { RCURLYBRACKET }
   | '}' { RCURLYBRACKET }
   | ".%" { DOTPERCENT }
-  | '|' { PIPE }
   | "<<" { LPARAMBRACKET }
   | ">>" { RPARAMBRACKET }
   | "=>" { IMPL }
@@ -457,6 +466,7 @@ rule token = parse
   | "<>" { NEQ }
   | '-' { MINUS }
   | '+' { PLUS }
+  | '|' { BAR }
   | '/' { DIV }
   | '*' { MULT }
   | "->" { ARROW }

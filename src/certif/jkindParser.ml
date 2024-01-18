@@ -294,7 +294,7 @@ let rec parse acc = function
     let sv = StateVar.state_var_of_string (s, jkind_scope) in
     let l = Numeral.of_string (HString.string_of_hstring l) in
     let u = Numeral.of_string (HString.string_of_hstring u) in
-    let range_ty = Type.mk_int_range l u in
+    let range_ty = Type.mk_int_range (Some l) (Some u) in
     (* Change type of variable *)
     StateVar.change_type_of_state_var sv range_ty;
 
@@ -455,8 +455,9 @@ let of_channel in_ch =
       allstatevars
       StateVar.StateVarSet.empty (* underapproximation *)
       (StateVar.StateVarHashtbl.create 3)
-      []
-      []
+      [] (* Global consts *)
+      [] (* Global constraints *)
+      [] (* Ufs *)
       init_uf_symbol
       init_args
       init_term

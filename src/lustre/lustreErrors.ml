@@ -19,30 +19,41 @@
 module LA = LustreAst
 
 type error = [
+  | `LustreArrayDependencies of Lib.position * LustreArrayDependencies.error_kind
   | `LustreAstDependenciesError of Lib.position * LustreAstDependencies.error_kind
   | `LustreAstInlineConstantsError of Lib.position * LustreAstInlineConstants.error_kind
+  | `LustreAbstractInterpretationError of Lib.position * LustreAbstractInterpretation.error_kind
   | `LustreAstNormalizerError
   | `LustreSyntaxChecksError of Lib.position * LustreSyntaxChecks.error_kind
   | `LustreTypeCheckerError of Lib.position * LustreTypeChecker.error_kind
   | `LustreUnguardedPreError of Lib.position * LustreAst.expr
   | `LustreParserError of Lib.position * string
+  | `LustreDesugarIfBlocksError of Lib.position * LustreDesugarIfBlocks.error_kind
+  | `LustreDesugarFrameBlocksError of Lib.position * LustreDesugarFrameBlocks.error_kind
 ]
 
-
 let error_position error = match error with
+  | `LustreArrayDependencies (pos, _) -> pos
   | `LustreAstDependenciesError (pos, _) -> pos
   | `LustreAstInlineConstantsError (pos, _) -> pos
+  | `LustreAbstractInterpretationError (pos, _) -> pos
   | `LustreAstNormalizerError -> assert false
   | `LustreSyntaxChecksError (pos, _) -> pos
   | `LustreTypeCheckerError (pos, _) -> pos
   | `LustreUnguardedPreError (pos, _) -> pos
   | `LustreParserError (pos, _) -> pos
+  | `LustreDesugarIfBlocksError (pos, _) -> pos
+  | `LustreDesugarFrameBlocksError (pos, _) -> pos
 
 let error_message error = match error with
+  | `LustreArrayDependencies (_, kind) -> LustreArrayDependencies.error_message kind
   | `LustreAstDependenciesError (_, kind) -> LustreAstDependencies.error_message kind
   | `LustreAstInlineConstantsError (_, kind) -> LustreAstInlineConstants.error_message kind
+  | `LustreAbstractInterpretationError (_, kind) -> LustreAbstractInterpretation.error_message kind
   | `LustreAstNormalizerError -> assert false
   | `LustreSyntaxChecksError (_, kind) -> LustreSyntaxChecks.error_message kind
   | `LustreTypeCheckerError (_, kind) -> LustreTypeChecker.error_message kind
   | `LustreUnguardedPreError (_, e) -> (Format.asprintf "@[<hov 2>Unguarded pre in expression@ %a@]" LA.pp_print_expr e)
   | `LustreParserError (_, e) -> e
+  | `LustreDesugarIfBlocksError (_, kind) -> LustreDesugarIfBlocks.error_message kind
+  | `LustreDesugarFrameBlocksError (_, kind) -> LustreDesugarFrameBlocks.error_message kind

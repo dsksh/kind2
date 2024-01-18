@@ -266,7 +266,7 @@ let split (input_sys, analysis, trans) solver k to_split actlits =
       if
         (Flags.BmcKind.compress ()) ||
         (Flags.BmcKind.lazy_invariants ()) ||
-        (Flags.BmcKind.print_cex ())
+        (Flags.BmcKind.ind_print_cex ())
       then 
 
         (* Get model for all variables *)
@@ -285,7 +285,7 @@ let split (input_sys, analysis, trans) solver k to_split actlits =
 
   in
 
-  let print_cex = Flags.BmcKind.print_cex () in
+  let print_cex = Flags.BmcKind.ind_print_cex () in
 
   (* Function to run if unsat. *)
   let if_unsat _ = None in
@@ -653,16 +653,16 @@ let launch input_sys aparam trans =
   let logic =
     match TransSys.get_logic trans with
     | `Inferred fs when Flags.BmcKind.compress () ->
-        let open TermLib.FeatureSet in
-        if subset fs (of_list [ Q; UF; A; BV ]) then
-          `Inferred (sup_logics [ fs; of_list [ BV; UF ] ])
-        else `Inferred (sup_logics [ fs; of_list [ IA; LA; UF ] ])
+      let open TermLib.FeatureSet in
+      if Compress.only_bv trans
+      then `Inferred (sup_logics [ fs; of_list [ BV; UF ] ])
+      else `Inferred (sup_logics [ fs; of_list [ IA; LA; UF ] ])
     | l -> l
   in
 
   (* Creating solver. *)
   let solver =
-    SMTSolver.create_instance ~produce_assignments:true
+    SMTSolver.create_instance ~produce_models:true
       logic (Flags.Smt.solver ())
   in
 
@@ -685,6 +685,8 @@ let launch input_sys aparam trans =
   if Flags.BmcKind.compress () then
     (* Declaring path compression function. *)
     Compress.init (SMTSolver.declare_fun solver) trans ;
+
+  TransSys.assert_global_constraints trans (SMTSolver.assert_term solver) ;
 
   (* Invariants of the system at 0. *)
   TransSys.invars_of_bound ~one_state_only:true trans Numeral.zero

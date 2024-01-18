@@ -20,7 +20,7 @@ open Lib
 
 module P = Property
 module SVM = StateVar.StateVarMap
-module SVS = StateVar.StateVarSet
+(* module SVS = StateVar.StateVarSet *)
 
 (* Offset of state variables in initial state constraint *)
 let init_base = Numeral.zero
@@ -67,6 +67,11 @@ type t =
     scope: Scope.t;
     (** Scope of transition system *)
 
+    ctr_state_var : StateVar.t option;
+    (** State variable corresponding to the internal counter generated
+        for reachability queries. Should be 'None' if there are no reachability
+        queries. *)
+
     init_flag_state_var : StateVar.t;
     (** State variable that becomes true in the first instant and false
        again in the second and all following instants *)
@@ -92,6 +97,8 @@ type t =
     global_consts : Var.t list;
     (** List of global free constants *)
     
+    global_constraints : Term.t list;
+
     state_vars : StateVar.t list;
     (** State variables in the scope of this transition system 
 
@@ -473,6 +480,8 @@ let collect_instances ({ scope } as trans_sys) =
 (* Access the transition system                                           *)
 (* ********************************************************************** *)
 
+let global_constraints { global_constraints } = global_constraints
+
 (* Close term by binding variables to terms with a let binding *)
 let close_term bindings term = 
   if bindings = [] then term else Term.mk_let bindings term
@@ -539,6 +548,13 @@ let rec set_subsystem_equations t scope init trans =
   in
   { t with init; trans; subsystems }
 
+let rec set_global_constraints t global_constraints =
+  let aux (t, instances) =
+    (set_global_constraints t global_constraints, instances)
+  in
+  let subsystems = List.map aux t.subsystems in
+  { t with subsystems ; global_constraints }
+
 (* Return the state variable for the init flag *)
 let init_flag_state_var { init_flag_state_var } = init_flag_state_var
 
@@ -556,6 +572,8 @@ let equal_scope { scope = s1 } { scope = s2 } = Scope.equal s1 s2
 (* Compare transition systems by their scope *)
 let compare_scope { scope = s1 } { scope = s2 } = Scope.compare s1 s2
 
+
+let set_logic t logic = { t with logic }
 
 (* Return the logic fragment needed to express the transition system *)
 let get_logic t = t.logic
@@ -816,6 +834,13 @@ let get_sofar_term trans_sys pos =
     )
   )
 
+let subsystem_includes_function_symbol =
+  (* Subsystem includes an abstract function: a partially defined function,
+     an imported function, a function abstracted by its contract,...
+  *)
+  fold_subsystems ~include_top:true
+    (fun acc ts -> acc || get_function_symbols ts <> [])
+    false
 
 (* **************************************************************** *)
 (* Set, Map, and Hash Table                                         *)
@@ -1065,6 +1090,9 @@ let define_and_declare_of_bounds
   declare_vars_of_bounds trans_sys declare lbound ubound
        
 
+let assert_global_constraints { global_constraints } assert_term =
+  List.iter (fun c -> assert_term c) global_constraints
+
 let init_uf_def { init_uf_symbol; init_formals; init } = 
   (init_uf_symbol, (init_formals, init))
 
@@ -1187,7 +1215,7 @@ let flatten_instances subsystems =
     subsystems 
 *)
 
-
+(*
 let rec map_cex_prop_to_subsystem' 
     filter_out_values
     ({ scope; subsystems } as trans_sys) 
@@ -1274,7 +1302,7 @@ let rec map_cex_prop_to_subsystem'
 
 let map_cex_prop_to_subsystem filter_out_values trans_sys cex prop = 
   map_cex_prop_to_subsystem' filter_out_values trans_sys [] cex prop 
-
+*)
 
 (*
 
@@ -1325,6 +1353,10 @@ let get_prop_status trans_sys p =
     (property_of_name trans_sys p).P.prop_status
 
   with Not_found -> P.PropUnknown
+
+(* Return current kind of property *)
+let get_prop_kind trans_sys p = 
+  (property_of_name trans_sys p).P.prop_kind
 
 (* Tests if a term is an invariant. *)
 let is_inv { invariants } = Invs.mem invariants
@@ -1401,6 +1433,21 @@ let get_prop_status_all_nocands t =
     ) [] t.properties
   |> List.rev
 
+(* Return current status and kind of all properties *)
+let get_prop_status_and_kind_all_nocands t = 
+  List.fold_left (fun acc -> function
+      | { P.prop_source = P.Candidate _ } -> acc
+      | { P.prop_name; P.prop_status; P.prop_kind } -> (prop_name, prop_status, prop_kind) :: acc
+    ) [] t.properties
+  |> List.rev
+
+(* Return the kind of all properties *)
+let get_prop_kind_all_nocands t = 
+  List.fold_left (fun acc -> function
+      | { P.prop_source = P.Candidate _ } -> acc
+      | { P.prop_name; P.prop_kind } -> (prop_name, prop_kind) :: acc
+    ) [] t.properties
+  |> List.rev
 
 (* Return current status of all properties *)
 let get_prop_status_all_unknown t = 
@@ -1416,6 +1463,8 @@ let get_prop_status_all_unknown t =
        | _ -> accum)
     []
     t.properties
+
+let get_ctr t = t.ctr_state_var
 
 
 (** Returns true iff sys has at least one real (not candidate) property. *)
@@ -1481,6 +1530,32 @@ let named_terms_list_of_bound l i =
 (* Instantiate all properties to the bound *)
 let props_list_of_bound t i = 
   named_terms_list_of_bound t.properties i
+
+let props_list_of_bound_no_skip t i = 
+  let props = 
+    (List.filter (fun prop -> match prop.Property.prop_kind with 
+      | P.Invariant -> true 
+      | P.Reachable None -> true
+      | P.Reachable Some (Within _) -> true
+      | P.Reachable Some (From _) -> false
+      | P.Reachable Some (At _) -> false
+      | P.Reachable Some (FromWithin _) -> false) 
+    t.properties) 
+  in
+  named_terms_list_of_bound props i
+
+let props_list_of_bound_skip t i = 
+  let props = 
+    (List.filter (fun prop -> match prop.Property.prop_kind with 
+    | P.Invariant -> false 
+    | P.Reachable None -> false
+    | P.Reachable Some (Within _) -> false
+    | P.Reachable Some (From _) -> true
+    | P.Reachable Some (At _) -> true
+    | P.Reachable Some (FromWithin _) -> true) 
+    t.properties) 
+  in
+  named_terms_list_of_bound props i
 
 
 (* Add an invariant to the transition system. *)
@@ -1612,6 +1687,7 @@ let mk_trans_sys
   unconstrained_inputs
   state_var_bounds
   global_consts
+  global_constraints
   ufs
   init_uf_symbol
   init_formals
@@ -1753,6 +1829,10 @@ let mk_trans_sys
     instance_var_id_start + List.length instance_var_bindings
   in
 
+  let ctr_state_var = 
+    List.find_opt (fun sv -> StateVar.name_of_state_var sv = HString.string_of_hstring GeneratedIdentifiers.ctr_id) state_vars
+  in
+
   (* Make sure name scope is unique in transition system *)
   List.iter (
     fun (t, _) ->
@@ -1767,6 +1847,7 @@ let mk_trans_sys
   let trans_sys = 
     { scope;
       (* instance_state_var; *)
+      ctr_state_var;
       init_flag_state_var;
       instance_var_bindings;
       (* global_state_vars; *)
@@ -1775,6 +1856,7 @@ let mk_trans_sys
       state_var_bounds;
       subsystems;
       global_consts;
+      global_constraints;
       ufs;
       init_uf_symbol;
       init_formals;
@@ -1989,7 +2071,20 @@ let enforce_constantness_via_equations sys =
         in
         Term.mk_and (trans_eq :: eqs)
       in
-      set_subsystem_equations sys (scope_of_trans_sys sys) init_eq trans_eq
+      let sys' =
+        set_subsystem_equations sys (scope_of_trans_sys sys) init_eq trans_eq
+      in
+      let global =
+        global_constraints sys |> List.map (fun c ->
+          c |> Term.map_vars (fun v ->
+            let sv = Var.state_var_of_state_var_instance v in
+            if List.mem sv const_svars then
+              Var.mk_state_var_instance sv Numeral.zero
+            else
+              v)
+        )
+      in
+      set_global_constraints sys' global
     )
   in
   sys', const_svars
