@@ -407,7 +407,8 @@ type kind_module =
   | `Parser
   | `Certif
   | `MCS
-  | `CONTRACTCK ]
+  | `CONTRACTCK 
+  | `HierarchyDecomposer ]
 
 (** Wallclock timeout *)
 exception TimeoutWall

@@ -850,7 +850,8 @@ type kind_module =
   | `Parser
   | `Certif
   | `MCS
-  | `CONTRACTCK ]
+  | `CONTRACTCK 
+  | `HierarchyDecomposer ]
 
 
 (* Pretty-print the type of the process *)
@@ -890,6 +891,7 @@ let pp_print_kind_module ppf = function
   | `Certif -> Format.fprintf ppf "certificate"
   | `MCS -> Format.fprintf ppf "minimal cut set"
   | `CONTRACTCK -> Format.fprintf ppf "contract checker"
+  | `HierarchyDecomposer-> Format.fprintf ppf "hiearchy decomposer"
 
 (* String representation of a process type *)
 let string_of_kind_module = string_of_t pp_print_kind_module
@@ -932,6 +934,7 @@ let short_name_of_kind_module = function
  | `Certif -> "certif"
  | `MCS -> "mcs"
  | `CONTRACTCK -> "contractck"
+ | `HierarchyDecomposer -> "hd"
                 
 
 (* Process type of a string *)
@@ -969,6 +972,7 @@ let kind_module_of_string = function
 
 
 let int_of_kind_module = function
+  | `HierarchyDecomposer -> -7
   | `CONTRACTCK -> -6
   | `MCS -> -5
   | `Certif -> -4

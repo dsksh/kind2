@@ -714,6 +714,15 @@ module Interpreter : sig
 end
 
 
+(** {2 HierarchyDecomposer flags} *)
+module HierarchyDecomposer : sig
+
+  (** Read input from file. *)
+  val input_file : unit -> string
+end
+
+
+
 (** {1 Convenience functions} *)
 
 (** Path to subdirectory for a system (in the output directory). *)

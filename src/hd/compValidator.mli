@@ -31,4 +31,5 @@ val translate :
   t list 
 val validate : t list -> bool
 
+val pp_print_constr : Format.formatter -> t -> unit
 val pp_print_script : Format.formatter -> t list -> unit

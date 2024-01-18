@@ -1,2 +1,0 @@
-(lang dune 3.7)
-;(context (opam (switch default) (paths (OPAMROOT /opt/opam)))) 

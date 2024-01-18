@@ -95,6 +95,8 @@ let main_of_process = function
   | `Supervisor -> InvarManager.main false false child_pids
   | `INVGENMACH | `INVGENMACHOS | `MCS | `CONTRACTCK
   | `Parser | `Certif -> ( fun _ _ _ -> () )
+  | `HierarchyDecomposer -> ( fun is _ _ ->  
+      is |> (Flags.HierarchyDecomposer.input_file () |> HierarchyDecomposer.main ))
 
 (** Cleanup function of the process *)
 let on_exit_of_process mdl =
@@ -129,6 +131,7 @@ let on_exit_of_process mdl =
     | `Interpreter -> Interpreter.on_exit None
     | `Supervisor -> InvarManager.on_exit None
     | `INVGENMACH | `INVGENMACHOS | `MCS | `CONTRACTCK
+    | `HierarchyDecomposer
     | `Parser | `Certif -> ()
   ) ;
   SMTSolver.destroy_all ()
@@ -592,6 +595,27 @@ let run in_sys =
     KEvent.log L_fatal "Need at least one Kind 2 module active." ;
     KEvent.terminate_log () ;
     exit ExitCodes.error
+
+  (* Only the interpreter is active. *)
+  | [m] when m = `HierarchyDecomposer -> (
+    try (
+      (*let param = ISys.interpreter_param in_sys in
+      (* Build trans sys and slicing info. *)
+      let sys, _ =
+        ISys.trans_sys_of_analysis
+          ~preserve_sig:true ~slice_nodes:false in_sys param
+      in*)
+      (* Run interpreter. *)
+      HierarchyDecomposer.main (
+        Flags.HierarchyDecomposer.input_file ()
+      ) in_sys (*param sys*) ;
+      (* Ignore SIGALRM from now on *)
+      Signals.ignore_sigalrm () ;
+      (* Cleanup before exiting process *)
+      on_exit_child None m Exit
+    )
+    with e -> on_exit_child None m e
+  )
 
   (* Only the interpreter is active. *)
   | [m] when m = `Interpreter -> (

@@ -2367,6 +2367,33 @@ module Interpreter = struct
 
 end
 
+(* HierarchyDecomposer flags. *)
+module HierarchyDecomposer = struct
+
+  include Make_Spec (struct end)
+
+  (* Identifier of the module. *)
+  let id = "hd"
+  (* Short description of the module. *)
+  let desc = "HD flags"
+  (* Explanation of the module. *)
+  let fmt_explain fmt =
+    Format.fprintf fmt "@[<v>\
+      A decomposition method for hierarchical descriptions.@ \
+      It is provided as a translator between Lustre programs.\
+    @]"
+
+  let input_file_default = ""
+  let input_file = ref input_file_default
+  let _ = add_spec
+    "--hd_input_file"
+    (Arg.Set_string input_file)
+    (fun fmt ->
+      Format.fprintf fmt "@[<v>Read input from file@]"
+    )
+  let input_file () = !input_file
+
+end
 
 
 
@@ -2420,6 +2447,9 @@ let module_map = [
   ) ;
   (Certif.id,
     (module Certif: FlagModule)
+  ) ;
+  (HierarchyDecomposer.id,
+    (module HierarchyDecomposer: FlagModule)
   ) ;
 ]
 
@@ -2907,6 +2937,7 @@ module Global = struct
     | "interpreter" -> `Interpreter
     | "MCS" -> `MCS
     | "CONTRACTCK" -> `CONTRACTCK
+    | "hd" -> `HierarchyDecomposer
     | unexpected -> Arg.Bad (
       Format.sprintf "Unexpected value '%s' for flag --enable" unexpected
     ) |> raise
@@ -2928,6 +2959,7 @@ module Global = struct
     | `Interpreter -> "interpreter"
     | `MCS -> "MCS"
     | `CONTRACTCK -> "CONTRACTCK"
+    | `HierarchyDecomposer -> "hd"
   let string_of_enable = function
     | head :: tail -> (
       List.fold_left
@@ -2942,7 +2974,8 @@ module Global = struct
     `INVGENINT ; `INVGENINTOS ;
     `INVGENMACH ; `INVGENMACHOS ;
     `INVGENREAL ; `INVGENREALOS ;
-    `C2I ; `Interpreter ; `MCS ; `CONTRACTCK
+    `C2I ; `Interpreter ; `MCS ; `CONTRACTCK ;
+    `HierarchyDecomposer
   ] |> List.map string_of_kind_module |> String.concat ", "
 
   let enable_default_init = []
