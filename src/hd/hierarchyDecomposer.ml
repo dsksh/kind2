@@ -9,7 +9,7 @@ let on_exit _ =
 
 type file_oc = Leaves | Proof
 
-let create_ppf input_file t =
+let create_ppf t =
   (* Create root dir if needed. *)
   Flags.output_dir () |> mk_dir ;
   (*(* Create smt_trace dir if needed. *)
@@ -23,7 +23,7 @@ let create_ppf input_file t =
   let filename = 
     Filename.concat
       (Flags.output_dir ())
-      ( Format.sprintf "%s.%s" (Filename.basename input_file)
+      ( Format.sprintf "%s.%s" (Filename.basename (Flags.input_file ()))
         (match t with | Leaves -> "leaves.lus" | Proof -> "proof.pl") )
   in try
     (* Open file for output, may fail *)
@@ -36,7 +36,7 @@ let create_ppf input_file t =
     failwith (Format.asprintf "Failed to open file %s" e)
 
 (* Main entry point *)
-let main input_file input_system =
+let main input_system =
 
   KEvent.set_module `HierarchyDecomposer;
 
@@ -49,13 +49,13 @@ let main input_file input_system =
   KEvent.log L_debug "%a" NodeInstance.pp_print_props ps;
 
   KEvent.log L_info "Printing leaf node instances";
-  let leaves_ppf = create_ppf input_file Leaves in
+  let leaves_ppf = create_ppf Leaves in
   Format.fprintf leaves_ppf "%a" NodeInstanceToLustre.pp_print_nodes ns;
   (*KEvent.log L_debug "%a" NodeInstanceToLustre.pp_print_nodes ns;*)
 
   KEvent.log L_info "Printing a CHR proof script";
   let cs = CompValidator.translate ns ps cs gs in
-  let proof_ppf = create_ppf input_file Proof in
+  let proof_ppf = create_ppf Proof in
   Format.fprintf proof_ppf "%a" CompValidator.pp_print_script cs;
   (*KEvent.log L_debug "%a" CompValidator.pp_print_script cs;*)
 

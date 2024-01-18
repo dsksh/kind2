@@ -2383,16 +2383,6 @@ module HierarchyDecomposer = struct
       It is provided as a translator between Lustre programs.\
     @]"
 
-  let input_file_default = ""
-  let input_file = ref input_file_default
-  let _ = add_spec
-    "--hd_input_file"
-    (Arg.Set_string input_file)
-    (fun fmt ->
-      Format.fprintf fmt "@[<v>Read input from file@]"
-    )
-  let input_file () = !input_file
-
 end
 
 

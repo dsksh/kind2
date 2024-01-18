@@ -95,8 +95,7 @@ let main_of_process = function
   | `Supervisor -> InvarManager.main false false child_pids
   | `INVGENMACH | `INVGENMACHOS | `MCS | `CONTRACTCK
   | `Parser | `Certif -> ( fun _ _ _ -> () )
-  | `HierarchyDecomposer -> ( fun is _ _ ->  
-      is |> (Flags.HierarchyDecomposer.input_file () |> HierarchyDecomposer.main ))
+  | `HierarchyDecomposer -> ( fun is _ _ ->  HierarchyDecomposer.main is )
 
 (** Cleanup function of the process *)
 let on_exit_of_process mdl =
@@ -606,9 +605,7 @@ let run in_sys =
           ~preserve_sig:true ~slice_nodes:false in_sys param
       in*)
       (* Run interpreter. *)
-      HierarchyDecomposer.main (
-        Flags.HierarchyDecomposer.input_file ()
-      ) in_sys (*param sys*) ;
+      HierarchyDecomposer.main in_sys ;
       (* Ignore SIGALRM from now on *)
       Signals.ignore_sigalrm () ;
       (* Cleanup before exiting process *)

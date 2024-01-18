@@ -716,9 +716,6 @@ end
 
 (** {2 HierarchyDecomposer flags} *)
 module HierarchyDecomposer : sig
-
-  (** Read input from file. *)
-  val input_file : unit -> string
 end
 
 
