@@ -2600,6 +2600,19 @@ module HierarchyDecomposer = struct
       It is provided as a translator between Lustre programs.\
     @]"
 
+  (* Annotation of main nodes. *)
+  let main_annot_default = true
+
+  let main_annot = ref main_annot_default
+
+  let _ =
+    add_spec "--main-annot" (bool_arg main_annot) (fun fmt ->
+        Format.fprintf fmt
+          "Annotate the nodes that need to be verified as main.@ Default: %a"
+          fmt_bool main_annot_default)
+
+  let main_annot () = !main_annot
+
 end
 
 module Lsp = struct

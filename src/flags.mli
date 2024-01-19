@@ -782,6 +782,10 @@ end
 
 (** {2 HierarchyDecomposer flags} *)
 module HierarchyDecomposer : sig
+
+  (** Annotate the main nodes to be verified. *)
+  val main_annot : unit -> bool
+
 end
 
 

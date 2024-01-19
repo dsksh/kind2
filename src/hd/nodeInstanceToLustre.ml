@@ -56,6 +56,9 @@ let pp_print_annot nodes ppf ni =
   else
     Format.fprintf ppf "@[<v 0>(* no contract *)@]@,"
 
+let pp_print_main_annot ppf is_first =
+  if Flags.HierarchyDecomposer.main_annot () && is_first then Format.fprintf ppf "--%%MAIN;"
+
 let pp_print_call ni map ppf = function 
   (* Node call on the base clock *)
   | (*{ call_node_name; 
@@ -76,7 +79,7 @@ let pp_print_call ni map ppf = function
   | _ -> failwith "unsupported"
 
 let pp_print_node nodes ppf ni =
-  let { name; map; src; _ } = ni in
+  let { name; map; src; is_first; _ } = ni in
   KEvent.log L_info "Printing node %a@." (pp_print_svar_instance None) name;
   let nno = Some name in
   let ivs = instantiate_svar_trie name map src.inputs in
@@ -104,7 +107,7 @@ let pp_print_node nodes ppf ni =
   %a\
   @[<hv 2>%s%a@]%a\
   @[<hv 2>let@ \
-    %a@ %a@]@,\
+    %a@ %a%a@]@,\
   tel@]@."
     (pp_print_svar_instance None) name
     (pp_print_list (pp_print_svi nno) ";@ ") ivs
@@ -115,6 +118,7 @@ let pp_print_node nodes ppf ni =
     Format.fprintf (if lvs = [] then "" else ";@,")
     (pp_print_list (LustreNode.pp_print_node_equation false) "@;") es
     (pp_print_list (pp_print_call ni map) "@;") calls
+    pp_print_main_annot is_first
 
 let pp_print_nodes ppf nodes =
   let _ = List.fold_right ( fun n acc -> 

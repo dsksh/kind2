@@ -490,7 +490,8 @@ and pp_print_app_left' safe pvar s ppf = function
   | h :: tl -> 
 
     Format.fprintf ppf 
-      " %a@ %a%t" 
+      (* ishii: add parentheses. *)
+      " %a@ (%a%t)" 
       pp_print_symbol s 
       (pp_print_term_node safe pvar) h
       (function ppf -> pp_print_app_left' safe pvar s ppf tl)
