@@ -2606,7 +2606,7 @@ module HierarchyDecomposer = struct
   let main_annot = ref main_annot_default
 
   let _ =
-    add_spec "--main-annot" (bool_arg main_annot) (fun fmt ->
+    add_spec "--main_annot" (bool_arg main_annot) (fun fmt ->
         Format.fprintf fmt
           "Annotate the nodes that need to be verified as main.@ Default: %a"
           fmt_bool main_annot_default)
