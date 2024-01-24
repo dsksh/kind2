@@ -100,7 +100,7 @@ let mk_subst_var ?(inherited = None) nno map var =
     | None -> ( 
         KEvent.log L_debug "not found@.";
         match nno with
-        | Some (nn,id) -> (
+        | Some (_,id) -> (
           (* Create a local name e.g. Self___id.v. *)  
           sv, id )
         | None -> (
@@ -263,7 +263,7 @@ let get_prop_rhs nn v_map e_map p =
 
   let expr = subst_e expr in
 
-  Format.printf "res: %a@." (LustreExpr.pp_print_lustre_expr false) expr;
+  KEvent.log L_debug "res: %a@." (LustreExpr.pp_print_lustre_expr false) expr;
 
   (* Collect and instantiate variables. *)
   let svs = LustreExpr.state_vars_of_expr expr in
